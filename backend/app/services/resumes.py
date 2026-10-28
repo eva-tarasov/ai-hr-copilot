@@ -6,7 +6,7 @@ from typing import BinaryIO, Literal
 from unicodedata import category
 
 from backend.app.models import Resume
-from backend.app.parsing.documents import parse_document
+from backend.app.parsing.documents import ParseResult, parse_document
 from backend.app.repositories.file_storage import FileStorage, StagedUpload, UploadTooLargeError
 from backend.app.repositories.resumes import DuplicateResumeError, ResumeRepository
 from backend.app.services.errors import NotFoundError
@@ -89,11 +89,25 @@ class ResumeService:
 
         storage_key: str | None = None
         try:
+            parsed = parse_document(staged.path, extension)
             existing = self.repository.get_by_hash(vacancy_id, staged.sha256)
             if existing is not None:
-                return self._duplicate_result(filename, existing)
+                if parsed.status == "ready" and existing.status != "ready":
+                    # The bytes are identical, so an existing stored file is reusable.
+                    if existing.storage_key is None:
+                        storage_key = self.storage.promote(staged, vacancy_id, extension)
+                    resume = self.repository.replace_extraction(
+                        existing,
+                        filename=filename,
+                        text=parsed.text or "",
+                        file_type=extension.lstrip("."),
+                        storage_key=storage_key or existing.storage_key,
+                        page_count=parsed.page_count,
+                        source_pages=parsed.source_pages,
+                    )
+                    return self._result(filename, staged, parsed, resume.id)
+                return self._existing_result(filename, staged, parsed, extension, existing)
 
-            parsed = parse_document(staged.path, extension)
             if extension in SUPPORTED_EXTENSIONS:
                 storage_key = self.storage.promote(staged, vacancy_id, extension)
 
@@ -110,20 +124,19 @@ class ResumeService:
                 page_count=parsed.page_count,
                 source_pages=parsed.source_pages,
             )
-            return UploadResult(
-                filename=filename,
-                status=parsed.status,
-                resume_id=resume.id,
-                error=parsed.error,
-                sha256=staged.sha256,
-                size_bytes=staged.size_bytes,
-            )
+            return self._result(filename, staged, parsed, resume.id)
         except DuplicateResumeError:
             self._clean_up(staged, storage_key)
             try:
                 existing = self.repository.get_by_hash(vacancy_id, staged.sha256)
                 if existing is not None:
-                    return self._duplicate_result(filename, existing)
+                    if parsed.status == "ready" and existing.status != "ready":
+                        return UploadResult(
+                            filename=filename,
+                            status="rejected",
+                            error="Could not save file; retry upload",
+                        )
+                    return self._existing_result(filename, staged, parsed, extension, existing)
             except Exception:
                 pass
             return UploadResult(filename=filename, status="rejected", error="Could not save file")
@@ -140,6 +153,40 @@ class ResumeService:
             except OSError:
                 pass
         self.storage.discard(staged)
+
+    @staticmethod
+    def _result(
+        filename: str, staged: StagedUpload, parsed: ParseResult, resume_id: int | None = None
+    ) -> UploadResult:
+        return UploadResult(
+            filename=filename,
+            status=parsed.status,
+            resume_id=resume_id,
+            error=parsed.error,
+            sha256=staged.sha256,
+            size_bytes=staged.size_bytes,
+        )
+
+    @classmethod
+    def _existing_result(
+        cls,
+        filename: str,
+        staged: StagedUpload,
+        parsed: ParseResult,
+        extension: str,
+        existing: Resume,
+    ) -> UploadResult:
+        if parsed.status == "ready" and existing.status == "ready":
+            return cls._duplicate_result(filename, existing)
+        if (
+            parsed.status == existing.status
+            and existing.file_type == (extension.lstrip(".") if extension in SUPPORTED_EXTENSIONS else None)
+            and parsed.error == existing.parse_error
+        ):
+            return cls._duplicate_result(filename, existing)
+        # A different extension or content verdict must describe this attempt,
+        # without changing the existing record for the same content hash.
+        return cls._result(filename, staged, parsed)
 
     @staticmethod
     def _duplicate_result(filename: str, resume: Resume) -> UploadResult:

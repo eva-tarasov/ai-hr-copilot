@@ -2,11 +2,14 @@
 
 from io import BytesIO
 from pathlib import Path
+from typing import Callable
 
 import pymupdf
 import pytest
 from docx import Document
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session
 
 from backend.app.main import create_app
 from backend.app.repositories.file_storage import CHUNK_SIZE, FileStorage, UploadTooLargeError
@@ -164,6 +167,125 @@ def test_duplicate_is_reused_within_vacancy_but_not_across_vacancies(client: Tes
     assert elsewhere["resume_id"] != original["resume_id"]
     assert len(client.get(f"/vacancies/{first}/resumes").json()) == 1
     assert len(client.get(f"/vacancies/{second}/resumes").json()) == 1
+
+
+@pytest.mark.parametrize(
+    ("content_factory", "correct_extension", "wrong_extension"),
+    [
+        (pdf_bytes, "pdf", "txt"),
+        (pdf_bytes, "pdf", "docx"),
+        (docx_bytes, "docx", "txt"),
+        (docx_bytes, "docx", "pdf"),
+    ],
+)
+def test_corrected_extension_replaces_unsupported_record(
+    client: TestClient,
+    tmp_path: Path,
+    content_factory: Callable[[str], bytes],
+    correct_extension: str,
+    wrong_extension: str,
+) -> None:
+    vacancy = vacancy_id(client)
+    content = content_factory("Synthetic corrected extension")
+    wrong = upload(client, vacancy, [(f"candidate.{wrong_extension}", content, "application/octet-stream")])[0]
+    assert wrong["status"] == "unsupported"
+
+    corrected = upload(client, vacancy, [(f"candidate.{correct_extension}", content, "application/octet-stream")])[0]
+    assert corrected["status"] == "ready"
+    assert corrected["duplicate"] is False
+    assert corrected["resume_id"] == wrong["resume_id"]
+    assert corrected["sha256"] == wrong["sha256"]
+
+    repeated = upload(client, vacancy, [(f"again.{correct_extension}", content, "application/octet-stream")])[0]
+    assert repeated["status"] == "ready"
+    assert repeated["duplicate"] is True
+    assert repeated["resume_id"] == corrected["resume_id"]
+    listed = client.get(f"/vacancies/{vacancy}/resumes").json()
+    assert len(listed) == 1
+    assert listed[0]["status"] == "ready"
+    assert listed[0]["filename"] == f"candidate.{correct_extension}"
+    assert listed[0]["file_type"] == correct_extension
+    detail = client.get(f"/resumes/{corrected['resume_id']}").json()
+    assert detail["extracted_text"] == "Synthetic corrected extension"
+    assert len(list((tmp_path / "uploads" / str(vacancy)).iterdir())) == 1
+    assert list((tmp_path / "uploads" / "tmp").iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("content_factory", "correct_extension", "wrong_extension"),
+    [
+        (pdf_bytes, "pdf", "txt"),
+        (pdf_bytes, "pdf", "docx"),
+        (docx_bytes, "docx", "txt"),
+        (docx_bytes, "docx", "pdf"),
+    ],
+)
+def test_wrong_extension_after_ready_does_not_return_false_ready(
+    client: TestClient,
+    tmp_path: Path,
+    content_factory: Callable[[str], bytes],
+    correct_extension: str,
+    wrong_extension: str,
+) -> None:
+    vacancy = vacancy_id(client)
+    content = content_factory("Synthetic correct first")
+    original = upload(client, vacancy, [(f"candidate.{correct_extension}", content, "application/octet-stream")])[0]
+    wrong = upload(client, vacancy, [(f"candidate.{wrong_extension}", content, "application/octet-stream")])[0]
+    assert wrong["status"] == "unsupported"
+    assert wrong["duplicate"] is False
+    assert wrong["resume_id"] is None
+    assert wrong["sha256"] == original["sha256"]
+    listed = client.get(f"/vacancies/{vacancy}/resumes").json()
+    assert len(listed) == 1
+    assert listed[0]["status"] == "ready"
+    assert listed[0]["id"] == original["resume_id"]
+    assert len(list((tmp_path / "uploads" / str(vacancy)).iterdir())) == 1
+    assert list((tmp_path / "uploads" / "tmp").iterdir()) == []
+
+
+@pytest.mark.parametrize("wrong_extension", ["txt", "docx"])
+def test_database_failure_while_correcting_extension_keeps_original_record_and_files(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, wrong_extension: str
+) -> None:
+    vacancy = vacancy_id(client)
+    content = pdf_bytes("Synthetic retry after database failure")
+    original = upload(client, vacancy, [(f"candidate.{wrong_extension}", content, "application/octet-stream")])[0]
+    files_before = list((tmp_path / "uploads" / str(vacancy)).glob("*"))
+
+    def fail_commit(self: Session) -> None:
+        raise OperationalError("UPDATE resumes", {}, Exception("synthetic SQLite failure"))
+
+    with monkeypatch.context() as patch:
+        patch.setattr(Session, "commit", fail_commit)
+        failed = upload(client, vacancy, [("candidate.pdf", content, "application/pdf")])[0]
+    assert failed["status"] == "rejected"
+    assert client.get(f"/resumes/{original['resume_id']}").json()["status"] == "unsupported"
+    assert list((tmp_path / "uploads" / str(vacancy)).glob("*")) == files_before
+    assert list((tmp_path / "uploads" / "tmp").iterdir()) == []
+
+    retried = upload(client, vacancy, [("candidate.pdf", content, "application/pdf")])[0]
+    assert retried["status"] == "ready"
+    assert retried["resume_id"] == original["resume_id"]
+    assert len(list((tmp_path / "uploads" / str(vacancy)).iterdir())) == 1
+
+
+def test_file_failure_while_correcting_extension_keeps_original_record(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vacancy = vacancy_id(client)
+    content = pdf_bytes("Synthetic retry after file failure")
+    original = upload(client, vacancy, [("candidate.txt", content, "text/plain")])[0]
+
+    def fail_promote(*args: object, **kwargs: object) -> None:
+        raise OSError("synthetic storage failure")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(FileStorage, "promote", fail_promote)
+        failed = upload(client, vacancy, [("candidate.pdf", content, "application/pdf")])[0]
+    assert failed["status"] == "rejected"
+    assert client.get(f"/resumes/{original['resume_id']}").json()["status"] == "unsupported"
+    assert list((tmp_path / "uploads" / str(vacancy)).glob("*")) == []
+    assert list((tmp_path / "uploads" / "tmp").iterdir()) == []
 
 
 def test_missing_vacancy_resume_and_file_return_404_or_422(client: TestClient) -> None:

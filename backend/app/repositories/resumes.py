@@ -38,3 +38,29 @@ class ResumeRepository:
             self.session.rollback()
             raise
         return resume
+
+    def replace_extraction(
+        self,
+        resume: Resume,
+        *,
+        filename: str,
+        text: str,
+        file_type: str,
+        storage_key: str,
+        page_count: int,
+        source_pages: list[dict[str, object]],
+    ) -> Resume:
+        resume.filename = filename
+        resume.status = "ready"
+        resume.extracted_text = text
+        resume.parse_error = None
+        resume.file_type = file_type
+        resume.storage_key = storage_key
+        resume.page_count = page_count
+        resume.source_pages = source_pages
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
+        return resume

@@ -2,10 +2,10 @@
 
 **Updated:** 2026-10-28
 **Current phase:** S02 — Secure resume upload and PDF/DOCX parsing
-**Current phase state:** IMPLEMENTED — AWAITING ARCHITECTURE REVIEW (not approved)
+**Current phase state:** CHANGES — FIXED LOCALLY, AWAITING RE-REVIEW (not approved)
 **Target:** local demo v0.1 Fri 2026-10-30; hardened v0.1 Mon 2026-11-02.
 **Approved architecture:** ADR-001 in `docs/DECISIONS.md`.
-**Latest reviewed PR / SHA:** PR: [https://github.com/eva-tarasov/ai-hr-copilot/pull/2](https://github.com/eva-tarasov/ai-hr-copilot/pull/2); Reviewed SHA: `d60b5da699e5b95e77c9b4a60c4a1ca1699eb6e6`.
+**Latest reviewed PR / SHA:** PR: [https://github.com/eva-tarasov/ai-hr-copilot/pull/3](https://github.com/eva-tarasov/ai-hr-copilot/pull/3); Reviewed SHA: `557b4394bf8e7d6072ddf168e391a7f8dc7bbfb7` (review decision: CHANGES).
 
 ## Phase checklist
 - [x] S00 — Repo + toolchain + runnable FastAPI/Streamlit + tests
@@ -25,7 +25,8 @@
 |---|---|---|---|---|---|
 | 2026-10-28 | S00 | `feat/s00-bootstrap`; [PR #1](https://github.com/eva-tarasov/ai-hr-copilot/pull/1); `1a46f2be80e2e0866487b68041c33b5ce6fa826f` | `pytest`: 2 passed; `compileall backend ui`: successful; FastAPI `GET /health`: HTTP 200, `{"status":"ok"}`; Streamlit opens and shows `Backend is available`; after stopping FastAPI, shows `Backend is unavailable` | PASS | Architecture review passed; manual checks confirmed by project owner on 2026-10-28. |
 | 2026-10-28 | S01 | `feat/s01-vacancy-criteria`; [PR #2](https://github.com/eva-tarasov/ai-hr-copilot/pull/2); `d60b5da699e5b95e77c9b4a60c4a1ca1699eb6e6` | `pytest -q`: 8 passed, 1 third-party deprecation warning; `compileall backend ui` passed (reconfirmed 2026-10-28); `git diff --check` passed; TestClient CRUD, 404/422, vacancy isolation, and persistence on temporary SQLite passed; live FastAPI `/health` and `/openapi.json`: HTTP 200 | PASS | Review PASS confirmed by project owner; S01 complete. |
-| 2026-10-28 | S02 | `feat/s02-resume-upload`; PR/SHA — | `pip install -e '.[dev]'` succeeded; `pytest -q`: 23 passed, 6 third-party warnings; `compileall backend ui`, `git diff --check`, and `pip check` passed; TestClient covered PDF/DOCX, mixed batch, malformed/empty/unsupported/oversized files, dedupe, isolation, restart persistence, cleanup on simulated DB/storage failures, and multipart OpenAPI metadata; live Uvicorn `/health` and `/openapi.json`: HTTP 200 | WAITING | Implementation ready for separate architecture review; S02 checklist remains open until human PASS. |
+| 2026-10-28 | S02 | `feat/s02-resume-upload`; [PR #3](https://github.com/eva-tarasov/ai-hr-copilot/pull/3); `557b4394bf8e7d6072ddf168e391a7f8dc7bbfb7` | `pip install -e '.[dev]'` succeeded; `pytest -q`: 23 passed, 6 third-party warnings; `compileall backend ui`, `git diff --check`, and `pip check` passed; TestClient covered PDF/DOCX, mixed batch, malformed/empty/unsupported/oversized files, dedupe, isolation, restart persistence, cleanup on simulated DB/storage failures, and multipart OpenAPI metadata; live Uvicorn `/health` and `/openapi.json`: HTTP 200 | CHANGES | Architecture review identified HIGH: duplicate lookup before extension/content validation could return a stale status. |
+| 2026-10-28 | S02 fix | `feat/s02-resume-upload`; local changes, no new SHA | `.venv/bin/python -m pytest -q`: 34 passed, 6 warnings; `.venv/bin/python -m compileall backend ui`: passed; `git diff --check`: passed. Regression tests cover invalid extension and content mismatch before/after valid PDF/DOCX, correction to ready with one SHA record, and simulated SQLite/storage failures during correction. | AWAITING RE-REVIEW | Parse before duplicate lookup; update an existing non-ready record only after valid extraction. S02 remains unchecked. |
 
 ## Gates
 A phase is COMPLETE only after tests and human review PASS. Codex updates this file with truthful evidence and leaves PR/SHA blank until known. Do not mark PASS on own authority.
@@ -45,9 +46,10 @@ A phase is COMPLETE only after tests and human review PASS. Codex updates this f
 ## S02 risks / limits
 - OCR and legacy `.doc` are unsupported. Oversized or storage-rejected files are returned per file but are not persisted because a complete content hash is unavailable.
 - The per-file ingress cap uses Starlette multipart parser internals; recheck this behavior when upgrading Starlette. The batch limit is 20 files.
+- Correcting a stored unsupported file reuses its opaque storage key when the bytes were already saved, even if the old key's suffix differs from the newly validated file type. No upload path is exposed by the API.
 
 ## Decisions / deviations
 - ADR-001 accepted; no new dependencies or architecture shifts without Change Gate.
 
 ## Next action
-Review the S02 diff and test evidence. Owner may commit/push and open a PR for architecture review; record actual PR/SHA when known. Begin S03 only after human review PASS and explicit approval.
+Commit the local S02 fix when approved, update PR #3, and repeat architecture review. Begin S03 only after human review PASS and explicit approval.
