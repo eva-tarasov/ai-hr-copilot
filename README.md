@@ -1,6 +1,6 @@
 # AI HR Copilot
 
-Local development skeleton for the AI HR Copilot. S00 provides a FastAPI health endpoint and a Streamlit page that checks it over HTTP. Vacancy, resume, and analysis features are planned for later phases.
+Local development app for the AI HR Copilot. S01 adds persistent vacancy and criterion management through FastAPI. Streamlit currently checks backend availability only; resume and analysis features are planned for later phases.
 
 ## Requirements
 
@@ -26,7 +26,7 @@ source .env
 set +a
 ```
 
-`APP_ENV` controls FastAPI debug mode (`development` enables it); `BACKEND_URL` tells Streamlit where to check the API. `DATABASE_URL` defaults to a local SQLite path and `LLM_PROVIDER` defaults to `fake`; neither is used by S00. Keep `.env` private.
+`APP_ENV` controls FastAPI debug mode (`development` enables it); `BACKEND_URL` tells Streamlit where to check the API. `DATABASE_URL` defaults to `sqlite:///./data/hr_copilot.sqlite3`; `LLM_PROVIDER` defaults to `fake` and is not used by S01. Keep `.env` private.
 
 ## Run backend
 
@@ -37,6 +37,16 @@ python -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 Check `http://127.0.0.1:8000/health`; the response should be `{"status":"ok"}`.
+
+On startup, SQLAlchemy creates missing vacancy and criterion tables in the configured SQLite database. This local MVP setup does not migrate existing tables. Schema migrations will require an explicit design in v0.2.
+
+Open `http://127.0.0.1:8000/docs` to exercise the S01 API:
+
+- `GET/POST /vacancies`, `GET/PATCH /vacancies/{id}`
+- `GET/POST /vacancies/{id}/criteria`
+- `PATCH/DELETE /criteria/{id}`
+
+Create a vacancy with `title` and `description`, then add criteria with `description` and `priority` (`required` or `preferred`). Criteria have `active` (default `true`) and zero-based `display_order`. If order is omitted, a new criterion is appended after the highest existing order for that vacancy. Lists sort by `display_order`, then ID; changing an order does not renumber other criteria. Vacancy deletion is outside the S01 API.
 
 ## Run frontend
 
