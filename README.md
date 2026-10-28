@@ -1,6 +1,6 @@
 # AI HR Copilot
 
-Local development app for the AI HR Copilot. S01 adds persistent vacancy and criterion management through FastAPI. Streamlit currently checks backend availability only; resume and analysis features are planned for later phases.
+Local development app for the AI HR Copilot. S02 adds bounded PDF/DOCX resume upload and text extraction through FastAPI. Streamlit currently checks backend availability only; analysis features are planned for later phases.
 
 ## Requirements
 
@@ -26,7 +26,7 @@ source .env
 set +a
 ```
 
-`APP_ENV` controls FastAPI debug mode (`development` enables it); `BACKEND_URL` tells Streamlit where to check the API. `DATABASE_URL` defaults to `sqlite:///./data/hr_copilot.sqlite3`; `LLM_PROVIDER` defaults to `fake` and is not used by S01. Keep `.env` private.
+`APP_ENV` controls FastAPI debug mode (`development` enables it); `BACKEND_URL` tells Streamlit where to check the API. `DATABASE_URL` defaults to `sqlite:///./data/hr_copilot.sqlite3`; `UPLOAD_DIR` defaults to `uploads`; `MAX_UPLOAD_MB` defaults to 10 per file. `LLM_PROVIDER` defaults to `fake` and is not used by S02. Keep `.env` private.
 
 ## Run backend
 
@@ -38,15 +38,24 @@ python -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
 
 Check `http://127.0.0.1:8000/health`; the response should be `{"status":"ok"}`.
 
-On startup, SQLAlchemy creates missing vacancy and criterion tables in the configured SQLite database. This local MVP setup does not migrate existing tables. Schema migrations will require an explicit design in v0.2.
+On startup, SQLAlchemy creates missing vacancy, criterion, and resume tables in the configured SQLite database. This local MVP setup does not migrate existing tables. Schema migrations will require an explicit design in v0.2.
 
-Open `http://127.0.0.1:8000/docs` to exercise the S01 API:
+Open `http://127.0.0.1:8000/docs` to exercise the API:
 
 - `GET/POST /vacancies`, `GET/PATCH /vacancies/{id}`
 - `GET/POST /vacancies/{id}/criteria`
 - `PATCH/DELETE /criteria/{id}`
+- `POST/GET /vacancies/{id}/resumes`, `GET /resumes/{id}`
 
 Create a vacancy with `title` and `description`, then add criteria with `description` and `priority` (`required` or `preferred`). Criteria have `active` (default `true`) and zero-based `display_order`. If order is omitted, a new criterion is appended after the highest existing order for that vacancy. Lists sort by `display_order`, then ID; changing an order does not renumber other criteria. Vacancy deletion is outside the S01 API.
+
+Upload up to 20 files per request under the `files` multipart field. Each result reports `ready`, `unsupported`, `parse_error`, or `rejected` (for a file over the size limit or a storage failure), plus a `duplicate` flag and safe error message. The multipart parser caps each file as bytes arrive; the service rechecks the limit while copying in 64 KiB chunks. SHA-256 deduplication applies within each vacancy. PDF details include one-based page numbers and extracted page text; DOCX has no reliable page numbers. A scanned PDF without a text layer is `unsupported`; OCR and legacy `.doc` are not implemented. The claimed MIME type is not trusted. Accepted raw uploads use generated names under the ignored `UPLOAD_DIR`; the API never exposes storage paths. Text and source pages are returned only by `GET /resumes/{id}`.
+
+For a local synthetic document outside this repository, the upload command is:
+
+```sh
+curl -F 'files=@/absolute/path/to/synthetic.pdf' -F 'files=@/absolute/path/to/synthetic.docx' http://127.0.0.1:8000/vacancies/1/resumes
+```
 
 ## Run frontend
 
