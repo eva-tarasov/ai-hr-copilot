@@ -1,22 +1,58 @@
-# AI HR Copilot — development starter kit
+# AI HR Copilot
 
-This ZIP is **not an implemented application**. It contains the agreed architecture, product scope, Codex task prompts, review workflow and progress tracking to initialize the new repository.
+Local development skeleton for the AI HR Copilot. S00 provides a FastAPI health endpoint and a Streamlit page that checks it over HTTP. Vacancy, resume, and analysis features are planned for later phases.
 
-## Setup
-1. Create a private GitHub repository `ai-hr-copilot`, and a new ChatGPT Project named `AI HR Copilot`.
-2. Copy `PROJECT_INSTRUCTIONS_CHATGPT.md` into ChatGPT Project Instructions (file itself may remain local or under `docs/`, not essential to the app).
-3. Copy all files except this note, if desired, into the new local repo; keep root `AGENTS.md`, `progress.md`, `docs/`, `prompts/`.
-4. Open the repo with Codex. Codex automatically reads `AGENTS.md` according to its project-instruction discovery.
-5. Paste content of `prompts/00_bootstrap.md`. Approve only the scoped phase.
-6. Verify tests, inspect diff, commit/push to a short-lived branch, open a PR. Share PR link for architectural review.
-7. Continue only after PASS; update `progress.md` with actual PR/SHA and evidence.
+## Requirements
 
-## Practical workflow
-- Codex writes code and tests. Human approves commits/push/merge/deploy.
-- ChatGPT checks diffs and architecture and suggests targeted fixes.
-- `progress.md` is the project status source of truth.
-- No production candidate data in repo or LLM calls without explicit legal approval.
-- Tests must use deterministic FakeProvider; OpenAI key may be unset until S03.
+- Python 3.13
+- macOS or another system with Python `venv` and `pip`
 
-## v0.1 design
-Streamlit frontend -> FastAPI -> application services -> SQLite/SQLAlchemy, parsing adapters, `LLMProvider` (Fake/OpenAI). v0.2 adds hosted DB, worker, provider plugins, access control.
+## Install
+
+From the repository root:
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+```
+
+The defaults work without a `.env` file or API key. To customize settings, copy `.env.example` to `.env`, edit it, then load it in each terminal before starting a process:
+
+```sh
+cp .env.example .env
+set -a
+source .env
+set +a
+```
+
+`APP_ENV` controls FastAPI debug mode (`development` enables it); `BACKEND_URL` tells Streamlit where to check the API. `DATABASE_URL` defaults to a local SQLite path and `LLM_PROVIDER` defaults to `fake`; neither is used by S00. Keep `.env` private.
+
+## Run backend
+
+In a terminal with the virtual environment activated:
+
+```sh
+python -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Check `http://127.0.0.1:8000/health`; the response should be `{"status":"ok"}`.
+
+## Run frontend
+
+In a second terminal with the virtual environment activated (and any custom environment loaded):
+
+```sh
+python -m streamlit run ui/app.py --server.address 127.0.0.1
+```
+
+Open `http://127.0.0.1:8501`. The page shows whether the backend is available. If the API is stopped, refresh the page to see the offline message.
+
+## Test
+
+```sh
+python -m pytest -q
+python -m compileall backend ui
+```
+
+This repository is for local development with synthetic or authorized de-identified data only. Do not commit keys, `.env`, databases, exports, or real resumes.
