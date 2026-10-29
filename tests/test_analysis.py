@@ -110,6 +110,52 @@ def test_fake_provider_makes_no_external_connection(monkeypatch: pytest.MonkeyPa
     assert result.findings[0].status == "confirmed"
 
 
+@pytest.mark.parametrize(
+    ("description", "text"),
+    [
+        ("Python", "Never worked with Python"),
+        ("Python", "Have not worked with Python"),
+        ("Docker", "Have no experience with Docker"),
+        ("Docker", "I don't use Docker"),
+        ("FastAPI", "Did not use FastAPI"),
+        ("Python", "Не работал с Python"),
+        ("Docker", "Нет опыта работы с Docker"),
+        ("Docker", "Не имею опыта работы с Docker"),
+        ("FastAPI", "Не использовал FastAPI"),
+    ],
+)
+def test_fake_negative_experience_is_never_confirmed(
+    description: str, text: str
+) -> None:
+    result = asyncio.run(
+        AnalysisService(FakeProvider()).analyze(text, [], [snapshot(1, description)])
+    )
+    assert result.findings[0].status == "mentioned"
+    assert result.findings[0].evidence_quote == text
+    assert result.findings[0].follow_up_question
+
+
+@pytest.mark.parametrize(
+    ("description", "text"),
+    [
+        ("Python", "Worked with Python"),
+        ("Docker", "Experience: Docker"),
+        ("FastAPI", "Used FastAPI"),
+        ("Python", "Работал с Python"),
+        ("Docker", "Опыт работы с Docker"),
+        ("FastAPI", "Использовал FastAPI"),
+    ],
+)
+def test_fake_direct_professional_experience_remains_confirmed(
+    description: str, text: str
+) -> None:
+    result = asyncio.run(
+        AnalysisService(FakeProvider()).analyze(text, [], [snapshot(1, description)])
+    )
+    assert result.findings[0].status == "confirmed"
+    assert result.findings[0].evidence_quote == text
+
+
 def test_real_quote_is_whitespace_normalized_and_pdf_page_is_derived() -> None:
     text = "Experience: Python\nbackend"
     output = {"findings": [finding(1, quote="Experience: Python backend")]}
@@ -166,6 +212,164 @@ def test_real_but_unrelated_or_weak_quote_cannot_confirm_criterion() -> None:
             text="Familiar with Python",
         )
     assert weak.value.code == "unsupported_status"
+
+
+@pytest.mark.parametrize(
+    ("description", "text"),
+    [
+        ("Python", "Never worked with Python"),
+        ("Python", "Have not worked with Python"),
+        ("Docker", "Have no experience with Docker"),
+        ("Docker", "I don't use Docker"),
+        ("FastAPI", "Did not use FastAPI"),
+        ("Python", "Не работал с Python"),
+        ("Docker", "Нет опыта работы с Docker"),
+        ("Docker", "Не имею опыта работы с Docker"),
+        ("FastAPI", "Не использовал FastAPI"),
+    ],
+)
+def test_service_rejects_confirmed_finding_based_on_negative_quote(
+    description: str, text: str
+) -> None:
+    with pytest.raises(AnalysisValidationError) as error:
+        service_result(
+            {"findings": [finding(1, quote=text)]},
+            text=text,
+            criteria=[snapshot(1, description)],
+        )
+    assert error.value.code == "unsupported_status"
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "Возраст кандидата", "Age", "25 years old", "Старше 30 лет",
+        "Date of birth", "Gender", "Пол кандидата",
+        "Religion", "Religious beliefs", "Вероисповедание", "Ethnic origin",
+        "Ethnic background", "Этническое происхождение",
+        "Nationality", "Гражданство", "Disability", "Инвалидность",
+        "Health", "Health status", "Состояние здоровья", "Sexual orientation",
+        "Семейное положение", "Political affiliation", "Race",
+    ],
+)
+def test_sensitive_criterion_is_rejected_before_provider_call(description: str) -> None:
+    provider = StaticProvider({"findings": [finding(1, status="not_found", quote=None)]})
+    with pytest.raises(AnalysisInputError) as error:
+        asyncio.run(
+            AnalysisService(provider).analyze(
+                "Experience: Python", [], [snapshot(1, description)]
+            )
+        )
+    assert error.value.code == "prohibited_criterion"
+    assert error.value.criterion_id == 1
+    assert provider.calls == 0
+
+
+@pytest.mark.parametrize(
+    "description",
+    [
+        "5 лет опыта Python",
+        "опыт работы в международных командах",
+        "Право на работу в РФ",
+        "Right to work in the EU",
+        "Work authorization",
+        "Experience in healthcare systems",
+        "Race condition debugging",
+        "Опыт разработки полного цикла",
+    ],
+)
+def test_professional_or_neutral_work_criteria_reach_provider(description: str) -> None:
+    provider = StaticProvider({"findings": [finding(1, status="not_found", quote=None)]})
+    result = asyncio.run(
+        AnalysisService(provider).analyze(
+            "Experience: Python", [], [snapshot(1, description)]
+        )
+    )
+    assert result.findings[0].status == "not_found"
+    assert provider.calls == 1
+
+
+@pytest.mark.parametrize(
+    "quote",
+    ["Experience: Python", "Experience: FastAPI"],
+)
+def test_compound_criterion_cannot_be_confirmed_by_one_part(quote: str) -> None:
+    with pytest.raises(AnalysisValidationError) as error:
+        service_result(
+            {"findings": [finding(1, quote=quote)]},
+            text=quote,
+            criteria=[snapshot(1, "Python and FastAPI")],
+        )
+    assert error.value.code == "incomplete_compound_evidence"
+
+
+def test_compound_criterion_with_both_parts_can_be_confirmed() -> None:
+    quote = "Experience: Python and FastAPI"
+    result = service_result(
+        {"findings": [finding(1, quote=quote)]},
+        text=quote,
+        criteria=[snapshot(1, "Python and FastAPI")],
+    )
+    assert result.findings[0].status == "confirmed"
+
+
+@pytest.mark.parametrize(
+    "quote",
+    ["Experience: Python but not FastAPI", "Experience: FastAPI, no Python"],
+)
+def test_compound_criterion_rejects_explicitly_negated_part(quote: str) -> None:
+    with pytest.raises(AnalysisValidationError) as error:
+        service_result(
+            {"findings": [finding(1, quote=quote)]},
+            text=quote,
+            criteria=[snapshot(1, "Python and FastAPI")],
+        )
+    assert error.value.code == "unsupported_status"
+
+
+def test_russian_compound_criterion_requires_both_parts() -> None:
+    criterion = snapshot(1, "Python и FastAPI")
+    with pytest.raises(AnalysisValidationError) as error:
+        service_result(
+            {"findings": [finding(1, quote="Опыт работы с FastAPI")]},
+            text="Опыт работы с FastAPI",
+            criteria=[criterion],
+        )
+    assert error.value.code == "incomplete_compound_evidence"
+
+    quote = "Опыт работы с Python и FastAPI"
+    result = service_result(
+        {"findings": [finding(1, quote=quote)]},
+        text=quote,
+        criteria=[criterion],
+    )
+    assert result.findings[0].status == "confirmed"
+
+
+def test_simple_professional_criterion_still_accepts_direct_quote() -> None:
+    result = service_result(
+        {"findings": [finding(1, quote="Experience: Python")]},
+        text="Experience: Python",
+        criteria=[snapshot(1, "Python")],
+    )
+    assert result.findings[0].status == "confirmed"
+
+
+def test_service_accepts_another_provider_implementation_via_same_contract() -> None:
+    class AlternateProvider:
+        async def analyze(
+            self, text: str, criterion_snapshot: list[CriterionSnapshot]
+        ) -> LLMAnalysis:
+            return LLMAnalysis(
+                findings=[CriterionFinding.model_validate(finding(criterion_snapshot[0].id))]
+            )
+
+    result = asyncio.run(
+        AnalysisService(AlternateProvider()).analyze(
+            "Experience: Python", [], [snapshot(1, "Python")]
+        )
+    )
+    assert result.findings[0].status == "confirmed"
 
 
 def test_prompt_injection_text_cannot_be_used_as_confirming_evidence() -> None:

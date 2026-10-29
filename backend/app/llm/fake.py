@@ -4,21 +4,12 @@ import re
 from collections.abc import Sequence
 
 from backend.app.llm.contracts import CriterionFinding, CriterionSnapshot, LLMAnalysis
+from backend.app.llm.text_signals import DIRECT_EXPERIENCE, NEGATIVE_EXPERIENCE
 
 _INSTRUCTION_LINE = re.compile(
     r"^\s*(?:ignore|disregard|override|system:|developer:|assistant:|output|respond|return|instructions?:)",
     re.IGNORECASE,
 )
-_NEGATIVE = re.compile(
-    r"\b(?:no experience|never used|not used|have not used|do not have)\b",
-    re.IGNORECASE,
-)
-_DIRECT = re.compile(
-    r"\b(?:experience|used|built|worked with|implemented|developed|led)\b",
-    re.IGNORECASE,
-)
-
-
 class FakeProvider:
     async def analyze(
         self, text: str, criterion_snapshot: Sequence[CriterionSnapshot]
@@ -42,9 +33,9 @@ class FakeProvider:
             for line in lines:
                 if _INSTRUCTION_LINE.match(line[2]) or not phrase.search(line[2]):
                     continue
-                if _NEGATIVE.search(line[2]):
+                if NEGATIVE_EXPERIENCE.search(line[2]):
                     negative.append(line)
-                elif _DIRECT.search(line[2]):
+                elif DIRECT_EXPERIENCE.search(line[2]):
                     positive.append(line)
                 else:
                     mentions.append(line)
