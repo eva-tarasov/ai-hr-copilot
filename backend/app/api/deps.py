@@ -12,6 +12,7 @@ from backend.app.repositories.vacancies import VacancyRepository
 from backend.app.services.criteria import CriterionService
 from backend.app.services.resumes import ResumeService
 from backend.app.services.vacancies import VacancyService
+from backend.app.services.batch_analysis import BatchAnalysisService
 from backend.app.repositories.file_storage import FileStorage
 
 
@@ -38,3 +39,7 @@ def get_resume_service(request: Request, session: DbSession) -> ResumeService:
     return ResumeService(
         ResumeRepository(session), vacancies, storage, request.app.state.max_upload_bytes
     )
+
+
+def get_batch_analysis_service(request: Request, session: DbSession) -> BatchAnalysisService:
+    return BatchAnalysisService(session, request.app.state.analysis_provider)

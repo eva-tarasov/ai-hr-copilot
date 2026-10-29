@@ -1,8 +1,8 @@
 # AI HR Copilot — progress
 
 **Updated:** 2026-10-29
-**Current phase:** S03 — LLM analysis contract, Fake + OpenAI
-**Current phase state:** COMPLETE — REVIEW PASS
+**Current phase:** S04 — Local batch analysis and persistence
+**Current phase state:** IMPLEMENTED — ARCHITECTURE REVIEW PENDING
 **Target:** local demo v0.1 Fri 2026-10-30; hardened v0.1 Mon 2026-11-02.
 **Approved architecture:** ADR-001 in `docs/DECISIONS.md`.
 **Latest reviewed PR / SHA:** PR: [https://github.com/eva-tarasov/ai-hr-copilot/pull/4](https://github.com/eva-tarasov/ai-hr-copilot/pull/4); Reviewed SHA: `f9d2989e6c5f0672b064897aa7098644b050b1ff` (review decision: PASS).
@@ -29,6 +29,7 @@
 | 2026-10-29 | S02 fix | `feat/s02-resume-upload`; [PR #3](https://github.com/eva-tarasov/ai-hr-copilot/pull/3); `4d8b9e3a3b00afb4fb3ac2a39cdb835583ccbf73` | `.venv/bin/python -m pytest -q`: 34 passed, 6 warnings; `.venv/bin/python -m compileall backend ui`: passed; `git diff --check`: passed. Regression tests cover invalid extension and content mismatch before/after valid PDF/DOCX, correction to ready with one SHA record, and simulated SQLite/storage failures during correction. | PASS | Duplicate lookup now follows parsing; an existing non-ready record is updated only after valid extraction. Repeat architecture review PASS confirmed by project owner. |
 | 2026-10-29 | S03 | `codex/s03-llm-analysis`; [PR #4](https://github.com/eva-tarasov/ai-hr-copilot/pull/4); `e4d9eb074cc7511c6b15881c7b933ceb277b2e69` | `.venv/bin/python -m pytest -q`: 71 passed, 6 third-party warnings; `compileall backend ui` and `git diff --check`: passed; `pip check`: no broken requirements. Tests cover four statuses, evidence/page validation, ID completeness, invalid text, prompt injection, safe provider failures, and OpenAI SDK 2.54.0 Structured Outputs via mock transport. Manual synthetic Fake call returned `confirmed` with exact quote. | CHANGES | Review found negative professional claims could be confirmed, sensitive criteria could reach providers, and partial evidence could confirm an AND/И criterion. |
 | 2026-10-29 | S03 fix | `codex/s03-llm-analysis`; [PR #4](https://github.com/eva-tarasov/ai-hr-copilot/pull/4); `f9d2989e6c5f0672b064897aa7098644b050b1ff` | `.venv/bin/python -m pytest -q`: 135 passed, 6 third-party warnings; `.venv/bin/python -m compileall backend ui`: PASS; `git diff --check`: PASS; `.venv/bin/python -m pip check`: PASS, no broken requirements. Regression tests cover English/Russian negations and positives, sensitive criteria rejected before provider call, allowed professional/work-right criteria, partial/full AND/И evidence including an explicitly negated part, provider interchangeability, and existing offline SDK tests. | PASS | Shared negative-claim signals, a bounded sensitive-criterion filter, and all-parts evidence for compound confirmed findings. Repeat architecture review PASS confirmed by project owner. |
+| 2026-10-29 | S04 | `feat/s04-batch-analysis`; PR/SHA: pending | `.venv/bin/python -m pytest -q`: 147 passed, 6 third-party warnings; `.venv/bin/python -m compileall backend ui`: exit 0; `git diff --check`: exit 0; `.venv/bin/python -m pip check`: no broken requirements (pip cache permission warning). Temporary SQLite and synthetic PDF/DOCX tests cover three-resume run, nonblocking POST, polling, per-document persistence, concurrency limit, errors/retries, snapshot after criterion edit/delete, restart recovery, and state transitions. Separate local FakeProvider TestClient check: upload 200 ready; POST 202; run completed; one confirmed finding, PDF page 1. | PENDING | In-process dispatcher, run/document/finding tables, immutable criterion snapshot, HTTP status/results endpoints. No PR, commit, or review PASS claimed. |
 
 ## Gates
 A phase is COMPLETE only after tests and human review PASS. Codex updates this file with truthful evidence and leaves PR/SHA blank until known. Do not mark PASS on own authority.
@@ -55,11 +56,16 @@ A phase is COMPLETE only after tests and human review PASS. Codex updates this f
 - Citation checks verify source text, page, basic criterion relevance, and obvious weak or instruction-like quotes. They cannot prove every semantic claim; human review remains necessary. Valid paraphrases without matching criterion terms may be rejected.
 - The sensitive-criterion filter targets explicit English/Russian wording; it cannot replace legal review or infer intent from ambiguous phrasing. Compound AND/И validation checks visible terms in the cited quote, not full semantic equivalence.
 - No model is configured by default for OpenAI; model availability and account access were not tested. A real request would send the supplied text to OpenAI and requires explicit owner authorization and synthetic or authorized de-identified data.
-- S03 does not persist analysis runs, expose an analysis endpoint, or process batches; these remain later phases.
+- The S03 analysis service is reused by S04 for persisted batch execution; S03 itself did not expose analysis endpoints.
+
+## S04 risks / limits
+- The dispatcher exists only inside the FastAPI process. Shutdown or restart marks incomplete runs and documents `interrupted`; it does not guarantee exactly-once execution or continue work while offline. A durable queue remains outside v0.1.
+- Schema setup uses `create_all` for new tables, not migrations. Real OpenAI requests were not made; provider error mapping was tested without network access.
+- Resume results are available through HTTP for human review; the Streamlit results UI and CSV remain outside S04.
 
 ## Decisions / deviations
 - ADR-001 accepted; no new dependencies or architecture shifts without Change Gate.
 - S03 review: KEEP CURRENT for the LLMProvider contract and two v0.1 adapters; DEFER candidate scores, fit percentages, and ranking.
 
 ## Next action
-Merge PR #4 and synchronize local `main`. Begin S04 only after explicit confirmation from the project owner.
+Submit S04 changes for separate GitHub architecture review. Keep S04 unchecked and do not begin S05 until review PASS and explicit confirmation from the project owner.
