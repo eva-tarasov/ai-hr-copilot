@@ -1,8 +1,8 @@
 # AI HR Copilot — progress
 
 **Updated:** 2026-10-29
-**Current phase:** S04 — Local batch analysis and persistence
-**Current phase state:** COMPLETE — REVIEW PASS
+**Current phase:** S05 — Streamlit UI vertical slice
+**Current phase state:** IMPLEMENTED — AWAITING REVIEW
 **Target:** local demo v0.1 Fri 2026-10-30; hardened v0.1 Mon 2026-11-02.
 **Approved architecture:** ADR-001 in `docs/DECISIONS.md`.
 **Latest reviewed PR / SHA:** PR: [https://github.com/eva-tarasov/ai-hr-copilot/pull/5](https://github.com/eva-tarasov/ai-hr-copilot/pull/5); Reviewed SHA: `dcb60b968ba149a66b2ea9c326aab1b4cbb26edc` (review decision: PASS).
@@ -30,6 +30,7 @@
 | 2026-10-29 | S03 | `codex/s03-llm-analysis`; [PR #4](https://github.com/eva-tarasov/ai-hr-copilot/pull/4); `e4d9eb074cc7511c6b15881c7b933ceb277b2e69` | `.venv/bin/python -m pytest -q`: 71 passed, 6 third-party warnings; `compileall backend ui` and `git diff --check`: passed; `pip check`: no broken requirements. Tests cover four statuses, evidence/page validation, ID completeness, invalid text, prompt injection, safe provider failures, and OpenAI SDK 2.54.0 Structured Outputs via mock transport. Manual synthetic Fake call returned `confirmed` with exact quote. | CHANGES | Review found negative professional claims could be confirmed, sensitive criteria could reach providers, and partial evidence could confirm an AND/И criterion. |
 | 2026-10-29 | S03 fix | `codex/s03-llm-analysis`; [PR #4](https://github.com/eva-tarasov/ai-hr-copilot/pull/4); `f9d2989e6c5f0672b064897aa7098644b050b1ff` | `.venv/bin/python -m pytest -q`: 135 passed, 6 third-party warnings; `.venv/bin/python -m compileall backend ui`: PASS; `git diff --check`: PASS; `.venv/bin/python -m pip check`: PASS, no broken requirements. Regression tests cover English/Russian negations and positives, sensitive criteria rejected before provider call, allowed professional/work-right criteria, partial/full AND/И evidence including an explicitly negated part, provider interchangeability, and existing offline SDK tests. | PASS | Shared negative-claim signals, a bounded sensitive-criterion filter, and all-parts evidence for compound confirmed findings. Repeat architecture review PASS confirmed by project owner. |
 | 2026-10-29 | S04 | `feat/s04-batch-analysis`; [PR #5](https://github.com/eva-tarasov/ai-hr-copilot/pull/5); `dcb60b968ba149a66b2ea9c326aab1b4cbb26edc` | Previously verified: `.venv/bin/python -m pytest -q`: 147 passed, 6 third-party warnings; `.venv/bin/python -m compileall backend ui`: PASS; `git diff --check`: PASS; `.venv/bin/python -m pip check`: PASS, no broken requirements (pip cache permission warning). Temporary SQLite and synthetic PDF/DOCX tests covered three-resume run, nonblocking POST, polling, per-document persistence, concurrency limit, errors/retries, snapshot after criterion edit/delete, restart recovery, and state transitions. Local FakeProvider TestClient check: upload 200 ready; POST 202; run completed; one confirmed finding, PDF page 1. | PASS | Architecture review PASS confirmed by project owner. Deferred findings: [BL-001](BACKLOG.md#bl-001), [BL-002](BACKLOG.md#bl-002), [BL-003](BACKLOG.md#bl-003). |
+| 2026-10-29 | S05 | `feat/s05-streamlit-ui`; PR/SHA: pending | `.venv/bin/python -m pytest -q`: 164 passed, 6 third-party warnings; `.venv/bin/python -m compileall backend ui`: exit 0; `git diff --check`: exit 0; `.venv/bin/python -m pip check`: no broken requirements (pip cache permission warning). New offline MockTransport and Streamlit AppTest checks cover HTTP CRUD/upload/run/error paths, snapshot findings, technical progress, rerun without repeated POST, manual run reopening, and offline state. Live local FastAPI and Streamlit launched with FakeProvider: vacancy create/edit, required/preferred criteria, six synthetic files (three ready, one duplicate, one parse_error, one unsupported), run #1 completed_with_errors (3 completed, 2 failed), PDF citation/page 1, extracted text, run reopening after browser refresh, and offline message after backend stop; delayed FakeProvider run #2 was reopened by ID while still running after browser refresh; the Streamlit file picker showed 10MB per file. | PENDING | Russian HTTP-only UI; no real OpenAI calls. CSV export and persistent HR review notes deferred from optional S05 scope. |
 
 ## Gates
 A phase is COMPLETE only after tests and human review PASS. Codex updates this file with truthful evidence and leaves PR/SHA blank until known. Do not mark PASS on own authority.
@@ -64,11 +65,16 @@ Actionable deferred technical findings are tracked in [BACKLOG.md](BACKLOG.md).
 - The dispatcher exists only inside the FastAPI process. Shutdown or restart marks incomplete runs and documents `interrupted`; it does not guarantee exactly-once execution or continue work while offline. A durable queue remains outside v0.1.
 - Deferred S04 review findings: [BL-001](BACKLOG.md#bl-001), [BL-002](BACKLOG.md#bl-002), [BL-003](BACKLOG.md#bl-003).
 - Schema setup uses `create_all` for new tables, not migrations. Real OpenAI requests were not made; provider error mapping was tested without network access.
-- Resume results are available through HTTP for human review; the Streamlit results UI and CSV remain outside S04.
+- S04 exposed results through HTTP; S05 adds the Streamlit view. CSV remains outside the completed S04 scope.
+
+## S05 risks / limits
+- Browser refresh may reset Streamlit session state; a known run ID can be reopened manually without creating a new analysis. Status updates are button-driven, without automatic polling.
+- CSV export and persistent HR reviewed flags/notes were not implemented. The backend has no review API; the UI does not imply that such notes are saved.
+- Streamlit's local file-picker limit is 10 MB; if `MAX_UPLOAD_MB` is changed, both limits must be aligned. Backend validates file size independently.
 
 ## Decisions / deviations
 - ADR-001 accepted; no new dependencies or architecture shifts without Change Gate.
 - S03 review: KEEP CURRENT for the LLMProvider contract and two v0.1 adapters; DEFER candidate scores, fit percentages, and ranking.
 
 ## Next action
-Merge PR #5 and synchronize local `main`. Begin S05 only after explicit confirmation from the project owner.
+Submit S05 changes for GitHub architecture review. Keep S05 unchecked and do not begin S06 until review PASS and explicit confirmation from the project owner.

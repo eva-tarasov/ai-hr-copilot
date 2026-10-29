@@ -1,6 +1,6 @@
 # AI HR Copilot
 
-Local development app for the AI HR Copilot. S04 adds persisted local batch analysis with bounded in-process concurrency. Streamlit currently checks backend availability only.
+Local development app for the AI HR Copilot. The Russian Streamlit UI covers the local vacancy → criteria → resume upload → analysis → evidence flow through the FastAPI HTTP API.
 
 ## Requirements
 
@@ -26,7 +26,7 @@ source .env
 set +a
 ```
 
-`APP_ENV` controls FastAPI debug mode (`development` enables it); `BACKEND_URL` tells Streamlit where to check the API. `DATABASE_URL` defaults to `sqlite:///./data/hr_copilot.sqlite3`; `UPLOAD_DIR` defaults to `uploads`; `MAX_UPLOAD_MB` defaults to 10 per file. `MAX_CONCURRENT_ANALYSES` defaults to 2 and must be positive. `LLM_PROVIDER` defaults to `fake`. For `LLM_PROVIDER=openai`, set both `OPENAI_API_KEY` and an account-supported Structured Outputs model in `OPENAI_MODEL`; there is no default model. Keep `.env` private.
+`APP_ENV` controls FastAPI debug mode (`development` enables it); `BACKEND_URL` is the FastAPI base URL used by Streamlit. `DATABASE_URL` defaults to `sqlite:///./data/hr_copilot.sqlite3`; `UPLOAD_DIR` defaults to `uploads`; `MAX_UPLOAD_MB` defaults to 10 per file. Streamlit's local `.streamlit/config.toml` also limits its file picker to 10 MB; change both settings if you intentionally change the limit. `MAX_CONCURRENT_ANALYSES` defaults to 2 and must be positive. `LLM_PROVIDER` defaults to `fake`. For `LLM_PROVIDER=openai`, set both `OPENAI_API_KEY` and an account-supported Structured Outputs model in `OPENAI_MODEL`; there is no default model. Keep `.env` private.
 
 ## Run backend
 
@@ -62,7 +62,7 @@ curl -F 'files=@/absolute/path/to/synthetic.pdf' -F 'files=@/absolute/path/to/sy
 
 After creating a vacancy, at least one active criterion, and at least one ready resume, start an analysis with `POST /vacancies/{id}/analyses` (no body). The endpoint returns HTTP 202 with a run ID and frozen criterion snapshot. Poll `GET /analyses/{run_id}` for run status, counters, provider/model, versions, and timestamps; fetch saved per-resume findings from `GET /analyses/{run_id}/results`. Only one pending or running run may exist per vacancy. When it reaches a terminal state, another run may be started. Invalid uploaded documents are reported as failed within the run; other documents continue.
 
-The default Fake provider works offline. The local dispatcher runs inside the FastAPI process with a shared concurrency limit; it saves each completed resume immediately and retries only transient provider failures up to three times. Incomplete runs become `interrupted` on restart, and can be restarted by submitting a new run. This is not a durable queue: work does not continue while the process is stopped. The API contains evidence for human review; it does not rank candidates or make hiring decisions. The Streamlit screen does not yet display runs or findings.
+The default Fake provider works offline. The local dispatcher runs inside the FastAPI process with a shared concurrency limit; it saves each completed resume immediately and retries only transient provider failures up to three times. Incomplete runs become `interrupted` on restart, and can be restarted by submitting a new run. This is not a durable queue: work does not continue while the process is stopped. The API contains evidence for human review; it does not rank candidates or make hiring decisions.
 
 ## S03 analysis service
 
@@ -99,7 +99,15 @@ In a second terminal with the virtual environment activated (and any custom envi
 python -m streamlit run ui/app.py --server.address 127.0.0.1
 ```
 
-Open `http://127.0.0.1:8501`. The page shows whether the backend is available. If the API is stopped, refresh the page to see the offline message.
+Open `http://127.0.0.1:8501`. The Russian UI shows backend availability. For a local demo with synthetic files:
+
+1. In **Вакансии**, create a vacancy and select it in the sidebar.
+2. In **Критерии**, add required/preferred criteria; edit their active state and display order if needed.
+3. In **Резюме**, select up to 20 PDF/DOCX files and click **Загрузить резюме**. Review per-file status, duplicates, and errors. Selection alone does not upload files.
+4. In **Анализ**, click **Запустить анализ** and use **Обновить статус** to poll. The percentage shown there measures completed document processing only.
+5. In **Результаты**, inspect all documents, filter by factual criterion status, expand a document for findings and verified citations, and select a resume to view its extracted text.
+
+The UI keeps the selected vacancy and run ID across Streamlit reruns. A browser refresh may create a new session; enter a known run ID in **Анализ** to reopen it without starting another run. If the API is stopped, refresh the page to see the offline message. CSV export and persistent HR review notes are not implemented in S05.
 
 ## Test
 
