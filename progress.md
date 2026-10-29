@@ -2,16 +2,16 @@
 
 **Updated:** 2026-10-29
 **Current phase:** S03 — LLM analysis contract, Fake + OpenAI
-**Current phase state:** CHANGES — FIXED LOCALLY, AWAITING RE-REVIEW (not approved)
+**Current phase state:** COMPLETE — REVIEW PASS
 **Target:** local demo v0.1 Fri 2026-10-30; hardened v0.1 Mon 2026-11-02.
 **Approved architecture:** ADR-001 in `docs/DECISIONS.md`.
-**Latest reviewed PR / SHA:** PR: [https://github.com/eva-tarasov/ai-hr-copilot/pull/4](https://github.com/eva-tarasov/ai-hr-copilot/pull/4); Reviewed SHA: `e4d9eb074cc7511c6b15881c7b933ceb277b2e69` (review decision: CHANGES).
+**Latest reviewed PR / SHA:** PR: [https://github.com/eva-tarasov/ai-hr-copilot/pull/4](https://github.com/eva-tarasov/ai-hr-copilot/pull/4); Reviewed SHA: `f9d2989e6c5f0672b064897aa7098644b050b1ff` (review decision: PASS).
 
 ## Phase checklist
 - [x] S00 — Repo + toolchain + runnable FastAPI/Streamlit + tests
 - [x] S01 — Vacancies and criteria CRUD
 - [x] S02 — Upload, PDF/DOCX extraction, duplicates and errors
-- [ ] S03 — Fake and OpenAI LLM adapters, strict schema, evidence
+- [x] S03 — Fake and OpenAI LLM adapters, strict schema, evidence
 - [ ] S04 — Bounded batch analysis and statuses
 - [ ] S05 — UI vertical slice and results/CSV (scope adjustable)
 - [ ] S06a — Friday demo, sample fixtures, smoke checks
@@ -28,7 +28,7 @@
 | 2026-10-28 | S02 | `feat/s02-resume-upload`; [PR #3](https://github.com/eva-tarasov/ai-hr-copilot/pull/3); `557b4394bf8e7d6072ddf168e391a7f8dc7bbfb7` | `pip install -e '.[dev]'` succeeded; `pytest -q`: 23 passed, 6 third-party warnings; `compileall backend ui`, `git diff --check`, and `pip check` passed; TestClient covered PDF/DOCX, mixed batch, malformed/empty/unsupported/oversized files, dedupe, isolation, restart persistence, cleanup on simulated DB/storage failures, and multipart OpenAPI metadata; live Uvicorn `/health` and `/openapi.json`: HTTP 200 | CHANGES | Architecture review identified HIGH: duplicate lookup before extension/content validation could return a stale status. |
 | 2026-10-29 | S02 fix | `feat/s02-resume-upload`; [PR #3](https://github.com/eva-tarasov/ai-hr-copilot/pull/3); `4d8b9e3a3b00afb4fb3ac2a39cdb835583ccbf73` | `.venv/bin/python -m pytest -q`: 34 passed, 6 warnings; `.venv/bin/python -m compileall backend ui`: passed; `git diff --check`: passed. Regression tests cover invalid extension and content mismatch before/after valid PDF/DOCX, correction to ready with one SHA record, and simulated SQLite/storage failures during correction. | PASS | Duplicate lookup now follows parsing; an existing non-ready record is updated only after valid extraction. Repeat architecture review PASS confirmed by project owner. |
 | 2026-10-29 | S03 | `codex/s03-llm-analysis`; [PR #4](https://github.com/eva-tarasov/ai-hr-copilot/pull/4); `e4d9eb074cc7511c6b15881c7b933ceb277b2e69` | `.venv/bin/python -m pytest -q`: 71 passed, 6 third-party warnings; `compileall backend ui` and `git diff --check`: passed; `pip check`: no broken requirements. Tests cover four statuses, evidence/page validation, ID completeness, invalid text, prompt injection, safe provider failures, and OpenAI SDK 2.54.0 Structured Outputs via mock transport. Manual synthetic Fake call returned `confirmed` with exact quote. | CHANGES | Review found negative professional claims could be confirmed, sensitive criteria could reach providers, and partial evidence could confirm an AND/И criterion. |
-| 2026-10-29 | S03 fix | `codex/s03-llm-analysis`; local changes, no new SHA | `.venv/bin/python -m pytest -q`: 135 passed, 6 third-party warnings; `.venv/bin/python -m compileall backend ui` and `git diff --check`: passed; `.venv/bin/python -m pip check`: no broken requirements. Regression tests cover English/Russian negations and positives, sensitive criteria rejected before provider call, allowed professional/work-right criteria, partial/full AND/И evidence including an explicitly negated part, provider interchangeability, and existing offline SDK tests. | AWAITING RE-REVIEW | Shared negative-claim signals, a bounded sensitive-criterion filter, and all-parts evidence for compound confirmed findings. S03 remains unchecked. |
+| 2026-10-29 | S03 fix | `codex/s03-llm-analysis`; [PR #4](https://github.com/eva-tarasov/ai-hr-copilot/pull/4); `f9d2989e6c5f0672b064897aa7098644b050b1ff` | `.venv/bin/python -m pytest -q`: 135 passed, 6 third-party warnings; `.venv/bin/python -m compileall backend ui`: PASS; `git diff --check`: PASS; `.venv/bin/python -m pip check`: PASS, no broken requirements. Regression tests cover English/Russian negations and positives, sensitive criteria rejected before provider call, allowed professional/work-right criteria, partial/full AND/И evidence including an explicitly negated part, provider interchangeability, and existing offline SDK tests. | PASS | Shared negative-claim signals, a bounded sensitive-criterion filter, and all-parts evidence for compound confirmed findings. Repeat architecture review PASS confirmed by project owner. |
 
 ## Gates
 A phase is COMPLETE only after tests and human review PASS. Codex updates this file with truthful evidence and leaves PR/SHA blank until known. Do not mark PASS on own authority.
@@ -62,4 +62,4 @@ A phase is COMPLETE only after tests and human review PASS. Codex updates this f
 - S03 review: KEEP CURRENT for the LLMProvider contract and two v0.1 adapters; DEFER candidate scores, fit percentages, and ranking.
 
 ## Next action
-Review the local S03 fixes, update existing PR #4 after owner-approved Git handoff, and repeat architecture review. Begin S04 only after S03 review PASS and explicit owner approval.
+Merge PR #4 and synchronize local `main`. Begin S04 only after explicit confirmation from the project owner.
