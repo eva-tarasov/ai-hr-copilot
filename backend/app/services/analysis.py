@@ -82,6 +82,24 @@ class AnalysisService:
     def __init__(self, provider: LLMProvider) -> None:
         self.provider = provider
 
+    @staticmethod
+    def validate_snapshot(criterion_snapshot: Sequence[CriterionSnapshot]) -> list[CriterionSnapshot]:
+        if not criterion_snapshot:
+            raise AnalysisInputError("empty_snapshot")
+        try:
+            snapshots = [CriterionSnapshot.model_validate(item) for item in criterion_snapshot]
+        except ValidationError:
+            raise AnalysisInputError("invalid_source_input") from None
+        ids = [item.id for item in snapshots]
+        if len(ids) != len(set(ids)):
+            raise AnalysisInputError("duplicate_snapshot_id")
+        if len({item.vacancy_id for item in snapshots}) != 1:
+            raise AnalysisInputError("mixed_vacancy_snapshot")
+        for item in snapshots:
+            if _is_prohibited_criterion(item.description):
+                raise AnalysisInputError("prohibited_criterion", item.id)
+        return snapshots
+
     async def analyze(
         self,
         extracted_text: str,
@@ -90,24 +108,14 @@ class AnalysisService:
     ) -> LLMAnalysis:
         if not extracted_text or not any(character.isalnum() for character in extracted_text):
             raise AnalysisInputError("unusable_text")
-        if not criterion_snapshot:
-            raise AnalysisInputError("empty_snapshot")
         try:
-            snapshots = [CriterionSnapshot.model_validate(item) for item in criterion_snapshot]
             pages = [SourcePage.model_validate(item) for item in source_pages]
         except ValidationError:
             raise AnalysisInputError("invalid_source_input") from None
-
+        snapshots = self.validate_snapshot(criterion_snapshot)
         ids = [item.id for item in snapshots]
-        if len(ids) != len(set(ids)):
-            raise AnalysisInputError("duplicate_snapshot_id")
-        if len({item.vacancy_id for item in snapshots}) != 1:
-            raise AnalysisInputError("mixed_vacancy_snapshot")
         if len({item.page for item in pages}) != len(pages):
             raise AnalysisInputError("duplicate_source_page")
-        for item in snapshots:
-            if _is_prohibited_criterion(item.description):
-                raise AnalysisInputError("prohibited_criterion", item.id)
 
         raw = await self.provider.analyze(extracted_text, snapshots)
         try:

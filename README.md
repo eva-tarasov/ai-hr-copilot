@@ -1,6 +1,6 @@
 # AI HR Copilot
 
-Local development app for the AI HR Copilot. S03 adds a typed, testable analysis service with offline Fake and OpenAI providers. Batch analysis, persisted analysis runs, and result screens are later phases. Streamlit currently checks backend availability only.
+Local development app for the AI HR Copilot. S04 adds persisted local batch analysis with bounded in-process concurrency. Streamlit currently checks backend availability only.
 
 ## Requirements
 
@@ -26,7 +26,7 @@ source .env
 set +a
 ```
 
-`APP_ENV` controls FastAPI debug mode (`development` enables it); `BACKEND_URL` tells Streamlit where to check the API. `DATABASE_URL` defaults to `sqlite:///./data/hr_copilot.sqlite3`; `UPLOAD_DIR` defaults to `uploads`; `MAX_UPLOAD_MB` defaults to 10 per file. `LLM_PROVIDER` defaults to `fake`. For `LLM_PROVIDER=openai`, set both `OPENAI_API_KEY` and an account-supported Structured Outputs model in `OPENAI_MODEL`; there is no default model. Keep `.env` private.
+`APP_ENV` controls FastAPI debug mode (`development` enables it); `BACKEND_URL` tells Streamlit where to check the API. `DATABASE_URL` defaults to `sqlite:///./data/hr_copilot.sqlite3`; `UPLOAD_DIR` defaults to `uploads`; `MAX_UPLOAD_MB` defaults to 10 per file. `MAX_CONCURRENT_ANALYSES` defaults to 2 and must be positive. `LLM_PROVIDER` defaults to `fake`. For `LLM_PROVIDER=openai`, set both `OPENAI_API_KEY` and an account-supported Structured Outputs model in `OPENAI_MODEL`; there is no default model. Keep `.env` private.
 
 ## Run backend
 
@@ -38,7 +38,7 @@ python -m uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
 
 Check `http://127.0.0.1:8000/health`; the response should be `{"status":"ok"}`.
 
-On startup, SQLAlchemy creates missing vacancy, criterion, and resume tables in the configured SQLite database. This local MVP setup does not migrate existing tables. Schema migrations will require an explicit design in v0.2.
+On startup, SQLAlchemy creates missing vacancy, criterion, resume, and analysis tables in the configured SQLite database. This local MVP setup does not migrate existing tables. Schema migrations will require an explicit design in v0.2.
 
 Open `http://127.0.0.1:8000/docs` to exercise the API:
 
@@ -46,6 +46,7 @@ Open `http://127.0.0.1:8000/docs` to exercise the API:
 - `GET/POST /vacancies/{id}/criteria`
 - `PATCH/DELETE /criteria/{id}`
 - `POST/GET /vacancies/{id}/resumes`, `GET /resumes/{id}`
+- `POST /vacancies/{id}/analyses`, `GET /analyses/{id}`, `GET /analyses/{id}/results`
 
 Create a vacancy with `title` and `description`, then add criteria with `description` and `priority` (`required` or `preferred`). Criteria have `active` (default `true`) and zero-based `display_order`. If order is omitted, a new criterion is appended after the highest existing order for that vacancy. Lists sort by `display_order`, then ID; changing an order does not renumber other criteria. Vacancy deletion is outside the S01 API.
 
@@ -57,9 +58,15 @@ For a local synthetic document outside this repository, the upload command is:
 curl -F 'files=@/absolute/path/to/synthetic.pdf' -F 'files=@/absolute/path/to/synthetic.docx' http://127.0.0.1:8000/vacancies/1/resumes
 ```
 
+## S04 local batch analysis
+
+After creating a vacancy, at least one active criterion, and at least one ready resume, start an analysis with `POST /vacancies/{id}/analyses` (no body). The endpoint returns HTTP 202 with a run ID and frozen criterion snapshot. Poll `GET /analyses/{run_id}` for run status, counters, provider/model, versions, and timestamps; fetch saved per-resume findings from `GET /analyses/{run_id}/results`. Only one pending or running run may exist per vacancy. When it reaches a terminal state, another run may be started. Invalid uploaded documents are reported as failed within the run; other documents continue.
+
+The default Fake provider works offline. The local dispatcher runs inside the FastAPI process with a shared concurrency limit; it saves each completed resume immediately and retries only transient provider failures up to three times. Incomplete runs become `interrupted` on restart, and can be restarted by submitting a new run. This is not a durable queue: work does not continue while the process is stopped. The API contains evidence for human review; it does not rank candidates or make hiring decisions. The Streamlit screen does not yet display runs or findings.
+
 ## S03 analysis service
 
-S03 has no HTTP analysis endpoint or database records. The application service accepts extracted text, optional PDF `source_pages`, and an immutable criterion snapshot. It requires one finding per criterion, checks that each quote is a real text fragment and relevant to the criterion, rejects obvious weak or negative quotes marked `confirmed`, and verifies or derives PDF page numbers from the saved page text. Errors have safe machine-readable codes for the later batch stage. It does not turn a provider failure into `not_found`.
+The S03 application service accepts extracted text, optional PDF `source_pages`, and an immutable criterion snapshot. S04 reuses it for each resume. It requires one finding per criterion, checks that each quote is a real text fragment and relevant to the criterion, rejects obvious weak or negative quotes marked `confirmed`, and verifies or derives PDF page numbers from the saved page text. Errors have safe machine-readable codes. It does not turn a provider failure into `not_found`.
 
 The Fake provider is deterministic and offline. It recognizes an exact criterion phrase in synthetic lines such as `Experience: Python`, `Familiar with SQL`, and a pair of contradictory statements. It is intentionally conservative and is not a general natural-language evaluator. Try it directly:
 

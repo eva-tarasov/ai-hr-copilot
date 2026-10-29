@@ -4,7 +4,10 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
-from openai import APIError, APIResponseValidationError, APITimeoutError, AsyncOpenAI
+from openai import (
+    APIConnectionError, APIError, APIResponseValidationError, APITimeoutError,
+    AsyncOpenAI, InternalServerError, RateLimitError,
+)
 from pydantic import ValidationError
 
 from backend.app.llm.contracts import CriterionSnapshot, LLMAnalysis
@@ -59,6 +62,8 @@ class OpenAIProvider:
             raise ProviderError("timeout") from None
         except APIResponseValidationError:
             raise ProviderError("invalid_output") from None
+        except (APIConnectionError, RateLimitError, InternalServerError):
+            raise ProviderError("transient_api_error") from None
         except APIError:
             raise ProviderError("api_error") from None
         except (ValidationError, ValueError, TypeError):

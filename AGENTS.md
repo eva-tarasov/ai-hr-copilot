@@ -33,6 +33,11 @@ Build a small, demonstrable local HR resume-analysis tool. Before coding, identi
 - New framework/service or major dependency; schema breaking changes; major architectural change; cloud/production deployments; connecting accounts or external APIs; commits, pushes, PR creation/merge, payment, destructive actions.
 - If proposed, provide option KEEP CURRENT / DEFER / RUN SMALL SPIKE / ADOPT with cost, risk, and why.
 
+## Technical Debt / Backlog
+- Check `BACKLOG.md` after each phase. During implementation, fix only items included in the approved scope; do not independently implement backlog items.
+- After architecture review, record deferred actionable findings in `BACKLOG.md` without duplicates. Do not repeat detailed backlog entries in `progress.md`.
+- Do not change priority or target without a reason. Close an item only after verification and a link to the implementing PR/SHA.
+
 ## Quality commands (once repo bootstrap exists)
 - `python -m pytest -q`
 - `python -m compileall backend ui`

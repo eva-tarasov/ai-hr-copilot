@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-from openai import APIError, APITimeoutError, AsyncOpenAI
+from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, InternalServerError, RateLimitError
 from pydantic import ValidationError
 
 from backend.app.core.config import Settings, get_settings
@@ -589,6 +589,9 @@ def test_openai_refusal_incomplete_or_invalid_structure_is_explicit_error(
     ("failure", "expected_code"),
     [
         (APITimeoutError(request=httpx.Request("POST", "https://example.invalid")), "timeout"),
+        (APIConnectionError(request=httpx.Request("POST", "https://example.invalid")), "transient_api_error"),
+        (RateLimitError("rate limit", response=httpx.Response(429, request=httpx.Request("POST", "https://example.invalid")), body=None), "transient_api_error"),
+        (InternalServerError("server error", response=httpx.Response(500, request=httpx.Request("POST", "https://example.invalid")), body=None), "transient_api_error"),
         (
             APIError(
                 "synthetic API error",

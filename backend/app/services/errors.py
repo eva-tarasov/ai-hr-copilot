@@ -3,3 +3,11 @@
 
 class NotFoundError(Exception):
     pass
+
+
+class ConflictError(Exception):
+    pass
+
+
+class InvalidRunError(Exception):
+    pass
