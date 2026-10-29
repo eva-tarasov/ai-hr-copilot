@@ -1,6 +1,6 @@
 # AI HR Copilot
 
-Local development app for the AI HR Copilot. S02 adds bounded PDF/DOCX resume upload and text extraction through FastAPI. Streamlit currently checks backend availability only; analysis features are planned for later phases.
+Local development app for the AI HR Copilot. S03 adds a typed, testable analysis service with offline Fake and OpenAI providers. Batch analysis, persisted analysis runs, and result screens are later phases. Streamlit currently checks backend availability only.
 
 ## Requirements
 
@@ -26,7 +26,7 @@ source .env
 set +a
 ```
 
-`APP_ENV` controls FastAPI debug mode (`development` enables it); `BACKEND_URL` tells Streamlit where to check the API. `DATABASE_URL` defaults to `sqlite:///./data/hr_copilot.sqlite3`; `UPLOAD_DIR` defaults to `uploads`; `MAX_UPLOAD_MB` defaults to 10 per file. `LLM_PROVIDER` defaults to `fake` and is not used by S02. Keep `.env` private.
+`APP_ENV` controls FastAPI debug mode (`development` enables it); `BACKEND_URL` tells Streamlit where to check the API. `DATABASE_URL` defaults to `sqlite:///./data/hr_copilot.sqlite3`; `UPLOAD_DIR` defaults to `uploads`; `MAX_UPLOAD_MB` defaults to 10 per file. `LLM_PROVIDER` defaults to `fake`. For `LLM_PROVIDER=openai`, set both `OPENAI_API_KEY` and an account-supported Structured Outputs model in `OPENAI_MODEL`; there is no default model. Keep `.env` private.
 
 ## Run backend
 
@@ -56,6 +56,33 @@ For a local synthetic document outside this repository, the upload command is:
 ```sh
 curl -F 'files=@/absolute/path/to/synthetic.pdf' -F 'files=@/absolute/path/to/synthetic.docx' http://127.0.0.1:8000/vacancies/1/resumes
 ```
+
+## S03 analysis service
+
+S03 has no HTTP analysis endpoint or database records. The application service accepts extracted text, optional PDF `source_pages`, and an immutable criterion snapshot. It requires one finding per criterion, checks that each quote is a real text fragment and relevant to the criterion, rejects obvious weak or negative quotes marked `confirmed`, and verifies or derives PDF page numbers from the saved page text. Errors have safe machine-readable codes for the later batch stage. It does not turn a provider failure into `not_found`.
+
+The Fake provider is deterministic and offline. It recognizes an exact criterion phrase in synthetic lines such as `Experience: Python`, `Familiar with SQL`, and a pair of contradictory statements. It is intentionally conservative and is not a general natural-language evaluator. Try it directly:
+
+```sh
+python - <<'PY'
+import asyncio
+from datetime import UTC, datetime
+from backend.app.core.config import get_settings
+from backend.app.llm.contracts import CriterionSnapshot
+from backend.app.llm.factory import make_provider
+from backend.app.services.analysis import AnalysisService
+
+criterion = CriterionSnapshot(
+    id=1, vacancy_id=1, description="Python", priority="required",
+    active=True, display_order=0, updated_at=datetime(2026, 10, 29, tzinfo=UTC),
+)
+service = AnalysisService(make_provider(get_settings()))
+result = asyncio.run(service.analyze("Experience: Python", [], [criterion]))
+print(result.model_dump_json(indent=2))
+PY
+```
+
+With the default `LLM_PROVIDER=fake`, this prints a `confirmed` finding with an exact quote and makes no network call. For OpenAI, the adapter uses the official [Responses API Structured Outputs](https://developers.openai.com/api/docs/guides/structured-outputs) helper with Pydantic. Real OpenAI calls send the supplied resume text and criteria to that service; only synthetic or explicitly authorized de-identified data should be used. Model availability and account access have not been verified here, and no paid request is part of the automated tests.
 
 ## Run frontend
 
