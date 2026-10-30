@@ -16,7 +16,7 @@ dependencies = [
     "python-docx>=1.1,<2",
     "python-multipart>=0.0.10,<1",
     "sqlalchemy>=2,<3",
-    "streamlit>=1.40,<2",
+    "streamlit>=1.47,<2",
     "uvicorn>=0.30,<1",
 ]
 

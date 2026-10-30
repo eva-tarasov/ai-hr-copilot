@@ -1,12 +1,18 @@
 """Archive and run-history API checks on isolated SQLite and synthetic documents."""
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event, local
 from time import monotonic, sleep
 import sqlite3
 
 from fastapi.testclient import TestClient
+import pytest
+from sqlalchemy import event
 
 from backend.app.main import create_app
+from backend.app.repositories.resumes import ArchiveDuringRunError, ResumeRepository
+from backend.app.services.batch_analysis import BatchAnalysisService
 from tests.test_resumes import pdf_bytes
 
 
@@ -116,6 +122,100 @@ def test_archive_active_run_block_and_other_vacancy_independent(client: TestClie
     assert client.post(f"/resumes/{second['resume_id']}/archive").status_code == 200
     assert client.get(f"/vacancies/{second_vacancy}/resumes").json() == []
     assert len(client.get(f"/vacancies/{first_vacancy}/resumes").json()) == 1
+
+
+@pytest.mark.parametrize("first_operation", ["archive", "run"])
+def test_archive_and_run_creation_serialize_on_separate_sqlite_connections(
+    client: TestClient, first_operation: str,
+) -> None:
+    vacancy_id = vacancy(client, f"Concurrent {first_operation}")
+    criterion(client, vacancy_id)
+    archived_candidate = upload(
+        client, vacancy_id, "archive.pdf", pdf_bytes("I have experience with Python archive.")
+    )
+    remaining_candidate = upload(
+        client, vacancy_id, "remaining.pdf", pdf_bytes("I have experience with Python remaining.")
+    )
+    previous_run = run(client, vacancy_id)
+    previous_results = client.get(f"/analyses/{previous_run['id']}/results").json()
+
+    factory = client.app.state.session_factory
+    engine = factory.kw["bind"]
+    thread_role = local()
+    first_has_lock = Event()
+    second_attempted_lock = Event()
+    release_first = Event()
+
+    def before_execute(connection, cursor, statement, parameters, context, executemany):
+        if statement == "BEGIN IMMEDIATE" and getattr(thread_role, "value", None) == "second":
+            second_attempted_lock.set()
+
+    def after_execute(connection, cursor, statement, parameters, context, executemany):
+        if statement == "BEGIN IMMEDIATE" and getattr(thread_role, "value", None) == "first":
+            first_has_lock.set()
+            if not release_first.wait(timeout=5):
+                raise AssertionError("first transaction was not released")
+
+    def operation(kind: str, role: str) -> tuple[int, int | str]:
+        with factory() as session:
+            thread_role.value = role
+            try:
+                connection_id = id(session.connection().connection.driver_connection)
+                if kind == "run":
+                    run_id = BatchAnalysisService(
+                        session, client.app.state.analysis_provider
+                    ).create(vacancy_id)
+                    return connection_id, run_id
+                try:
+                    resume = ResumeRepository(session).archive(archived_candidate["resume_id"])
+                except ArchiveDuringRunError:
+                    return connection_id, "active_run_blocks_archive"
+                assert resume is not None
+                assert resume.archived is True
+                return connection_id, "archived"
+            finally:
+                thread_role.value = None
+
+    event.listen(engine, "before_cursor_execute", before_execute)
+    event.listen(engine, "after_cursor_execute", after_execute)
+    second_operation = "run" if first_operation == "archive" else "archive"
+    try:
+        with ThreadPoolExecutor(max_workers=2) as workers:
+            first = workers.submit(operation, first_operation, "first")
+            assert first_has_lock.wait(timeout=5)
+            second = workers.submit(operation, second_operation, "second")
+            assert second_attempted_lock.wait(timeout=5)
+            assert not second.done()  # SQLite cannot finish the second BEGIN while the first holds it.
+            release_first.set()
+            first_connection, first_result = first.result(timeout=5)
+            second_connection, second_result = second.result(timeout=5)
+    finally:
+        release_first.set()
+        event.remove(engine, "before_cursor_execute", before_execute)
+        event.remove(engine, "after_cursor_execute", after_execute)
+
+    assert first_connection != second_connection
+    if first_operation == "archive":
+        assert first_result == "archived"
+        assert isinstance(second_result, int)
+        assert [item["resume_id"] for item in client.get(
+            f"/analyses/{second_result}/results"
+        ).json()["results"]] == [remaining_candidate["resume_id"]]
+        assert client.get(f"/resumes/{archived_candidate['resume_id']}").json()["archived"] is True
+    else:
+        assert isinstance(first_result, int)
+        assert second_result == "active_run_blocks_archive"
+        assert [item["resume_id"] for item in client.get(
+            f"/analyses/{first_result}/results"
+        ).json()["results"]] == [
+            archived_candidate["resume_id"], remaining_candidate["resume_id"],
+        ]
+        blocked = client.post(f"/resumes/{archived_candidate['resume_id']}/archive")
+        assert blocked.status_code == 409
+        assert blocked.json() == {"detail": "active_run_blocks_archive"}
+        assert client.get(f"/resumes/{archived_candidate['resume_id']}").json()["archived"] is False
+
+    assert client.get(f"/analyses/{previous_run['id']}/results").json() == previous_results
 
 
 def test_archive_missing_id_unlinked_delete_and_history_list_scoped(client: TestClient) -> None:

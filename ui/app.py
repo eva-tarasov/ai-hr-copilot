@@ -51,7 +51,7 @@ def _vacancies_page(api: ApiClient, vacancies: list[dict[str, Any]],
     if vacancies:
         st.dataframe(
             [{"ID": item["id"], "Название": item["title"], "Описание": item["description"]}
-             for item in vacancies], hide_index=True, width="stretch",
+             for item in vacancies], hide_index=True, use_container_width=True,
         )
     else:
         st.info("Пока нет вакансий. Создайте первую вакансию ниже.")
@@ -100,7 +100,7 @@ def _criteria_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
               "Приоритет": PRIORITY_LABELS.get(item["priority"], item["priority"]),
               "Статус": "Активен" if item["active"] else "Выключен",
               "Порядок": item["display_order"]}
-             for item in criteria], hide_index=True, width="stretch",
+             for item in criteria], hide_index=True, use_container_width=True,
         )
     else:
         st.info("У этой вакансии пока нет критериев. Добавьте первый ниже.")
@@ -182,7 +182,7 @@ def _resumes_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
               "Дубликат": "Да" if item.get("duplicate") else "Нет",
               "В архиве": "Да" if item.get("archived") else "Нет",
               "Сообщение": upload_message(item)} for item in outcomes],
-            hide_index=True, width="stretch",
+            hide_index=True, use_container_width=True,
         )
     all_resumes = api.list_resumes(selected["id"], include_archived=True)
     view = st.radio("Список резюме", ["Активные", "Архив"], horizontal=True,
@@ -199,7 +199,7 @@ def _resumes_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
     st.dataframe(
         [{"ID": item["id"], "Файл": item["filename"],
           "Статус": UPLOAD_LABELS.get(item["status"], item["status"])}
-         for item in resumes], hide_index=True, width="stretch",
+         for item in resumes], hide_index=True, use_container_width=True,
     )
     by_id = {item["id"]: item for item in resumes}
     delete_generation_key = f"resume_delete_generation_{selected['id']}"
@@ -332,7 +332,7 @@ def _results_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
         ) for item in run["criterion_snapshot"]},
     }
     st.dataframe(matrix_rows(results, run["criterion_snapshot"]),
-                 hide_index=True, width="stretch", height=min(650, 62 + 52 * len(results)),
+                 hide_index=True, use_container_width=True, height=min(650, 62 + 52 * len(results)),
                  row_height=48, column_config=columns)
     st.caption("При большом числе критериев таблица прокручивается по горизонтали. Порядок документов сохранён из запуска.")
     by_id = {item["resume_id"]: item for item in results}
