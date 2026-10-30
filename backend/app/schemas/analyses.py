@@ -1,14 +1,34 @@
 """HTTP contracts for S04 runs and validated results."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from backend.app.llm.contracts import CriterionSnapshot, FindingStatus
 
 RunStatus = Literal["pending", "running", "completed", "completed_with_errors", "failed", "interrupted"]
 DocumentStatus = Literal["pending", "running", "completed", "failed", "interrupted"]
+
+
+class RunSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    vacancy_id: int
+    created_at: datetime
+    started_at: datetime | None
+    completed_at: datetime | None
+    status: RunStatus
+    provider: str
+    model: str | None
+
+    @field_validator("created_at", "started_at", "completed_at")
+    @classmethod
+    def sqlite_utc(cls, value: datetime | None) -> datetime | None:
+        if value is not None and value.tzinfo is None:
+            return value.replace(tzinfo=UTC)
+        return value
 
 
 class RunRead(BaseModel):

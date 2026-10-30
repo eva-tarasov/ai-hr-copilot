@@ -16,6 +16,7 @@ _SAFE_DETAILS = {
     "no_ready_resumes": "Нет готовых резюме. Откройте раздел «Резюме», загрузите PDF/DOCX с доступным текстом и повторите запуск.",
     "prohibited_criterion": "Нельзя анализировать возраст и другие чувствительные характеристики кандидата. Откройте раздел «Критерии», выключите или удалите запрещённый критерий и повторите запуск.",
     "resume_in_analysis": "Документ связан с историей анализа и не может быть удалён без нарушения сохранённых результатов.",
+    "active_run_blocks_archive": "Пока анализ выполняется, архивирование недоступно. Дождитесь завершения и повторите действие.",
 }
 
 
@@ -124,8 +125,10 @@ class ApiClient:
         return self._request("POST", f"/vacancies/{vacancy_id}/resumes",
                              files=parts, timeout=60.0)
 
-    def list_resumes(self, vacancy_id: int) -> list[dict[str, Any]]:
-        return self._request("GET", f"/vacancies/{vacancy_id}/resumes", kind=list)
+    def list_resumes(self, vacancy_id: int, *, include_archived: bool = False) -> list[dict[str, Any]]:
+        return self._request("GET", f"/vacancies/{vacancy_id}/resumes",
+                             params={"include_archived": "true"} if include_archived else None,
+                             kind=list)
 
     def get_resume(self, resume_id: int) -> dict[str, Any]:
         return self._request("GET", f"/resumes/{resume_id}")
@@ -133,11 +136,20 @@ class ApiClient:
     def delete_resume(self, resume_id: int) -> None:
         self._request("DELETE", f"/resumes/{resume_id}")
 
+    def archive_resume(self, resume_id: int) -> dict[str, Any]:
+        return self._request("POST", f"/resumes/{resume_id}/archive")
+
+    def restore_resume(self, resume_id: int) -> dict[str, Any]:
+        return self._request("POST", f"/resumes/{resume_id}/restore")
+
     def start_analysis(self, vacancy_id: int) -> dict[str, Any]:
         return self._request("POST", f"/vacancies/{vacancy_id}/analyses")
 
     def get_analysis(self, run_id: int) -> dict[str, Any]:
         return self._request("GET", f"/analyses/{run_id}")
+
+    def list_analyses(self, vacancy_id: int) -> list[dict[str, Any]]:
+        return self._request("GET", f"/vacancies/{vacancy_id}/analyses", kind=list)
 
     def get_results(self, run_id: int) -> dict[str, Any]:
         return self._request("GET", f"/analyses/{run_id}/results")

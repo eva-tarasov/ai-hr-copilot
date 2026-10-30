@@ -1,6 +1,7 @@
 """UI-only labels and projections of existing HTTP responses."""
 
 from collections.abc import Mapping, Sequence
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -38,6 +39,54 @@ UPLOAD_LABELS = {
     "rejected": "Отклонено",
 }
 PRIORITY_LABELS = {"required": "Обязательный", "preferred": "Желательный"}
+MATRIX_FINDING_LABELS = {
+    "confirmed": "✓ Подтверждено",
+    "mentioned": "≈ Упомянуто",
+    "not_found": "— Не найдено в тексте",
+    "conflicting": "! Противоречие",
+}
+
+
+def run_label(run: Mapping[str, Any]) -> str:
+    created = datetime.fromisoformat(run["created_at"])
+    if created.tzinfo is None:
+        created = created.replace(tzinfo=UTC)  # SQLite stores utc_now() without tzinfo.
+    created = created.astimezone(UTC)
+    return f"{created:%d.%m.%Y %H:%M} UTC · {RUN_LABELS.get(run['status'], run['status'])} · #{run['id']}"
+
+
+def matrix_column(criterion: Mapping[str, Any]) -> str:
+    return f"{criterion['description']} · #{criterion['id']}"
+
+
+def matrix_rows(
+    results: Sequence[dict[str, Any]], snapshot: Sequence[dict[str, Any]]
+) -> list[dict[str, str]]:
+    rows = []
+    for result in results:
+        row = {
+            "Документ": result["filename"],
+            "Статус обработки": DOCUMENT_LABELS.get(result["status"], result["status"]),
+        }
+        findings = {item["criterion_id"]: item for item in result.get("findings", [])}
+        for criterion in snapshot:
+            if result["status"] != "completed":
+                value = DOCUMENT_LABELS.get(result["status"], result["status"])
+            elif criterion["id"] not in findings:
+                value = "Нет результата"
+            else:
+                status = findings[criterion["id"]]["status"]
+                value = MATRIX_FINDING_LABELS.get(status, status)
+            row[matrix_column(criterion)] = value
+        rows.append(row)
+    return rows
+
+
+def detail_findings(
+    result: Mapping[str, Any], snapshot: Sequence[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    by_id = {item.get("criterion_id"): item for item in result.get("findings", [])}
+    return [{"criterion": item, "finding": by_id.get(item["id"])} for item in snapshot]
 
 
 def technical_progress(run: Mapping[str, Any]) -> float:
@@ -70,6 +119,8 @@ def findings_with_snapshot(
 
 def upload_message(item: Mapping[str, Any]) -> str:
     status = item.get("status")
+    if item.get("archived"):
+        return "Файл уже хранится в архиве; восстановите его для нового анализа"
     if status == "ready":
         return "Файл уже был загружен" if item.get("duplicate") else "Текст извлечён"
     if status == "unsupported":

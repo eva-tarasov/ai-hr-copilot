@@ -7,9 +7,10 @@ import streamlit as st
 
 from ui.api_client import ApiClient, ApiError, UploadInput
 from ui.presentation import (
-    DOCUMENT_LABELS, FINDING_EXPLANATIONS, FINDING_LABELS, PRIORITY_LABELS,
-    RUN_LABELS, UPLOAD_LABELS, current_run_id, findings_with_snapshot,
-    remember_run, technical_progress, upload_message, visible_results,
+    DOCUMENT_LABELS, FINDING_EXPLANATIONS, FINDING_LABELS, MATRIX_FINDING_LABELS,
+    PRIORITY_LABELS, RUN_LABELS, UPLOAD_LABELS, current_run_id, detail_findings,
+    matrix_column, matrix_rows, remember_run, run_label, technical_progress,
+    upload_message, visible_results,
 )
 
 MAX_FILES_PER_REQUEST = 20
@@ -179,14 +180,22 @@ def _resumes_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
             [{"Файл": item.get("filename", ""),
               "Статус": UPLOAD_LABELS.get(item.get("status"), "Неизвестно"),
               "Дубликат": "Да" if item.get("duplicate") else "Нет",
+              "В архиве": "Да" if item.get("archived") else "Нет",
               "Сообщение": upload_message(item)} for item in outcomes],
             hide_index=True, width="stretch",
         )
-    resumes = api.list_resumes(selected["id"])
+    all_resumes = api.list_resumes(selected["id"], include_archived=True)
+    view = st.radio("Список резюме", ["Активные", "Архив"], horizontal=True,
+                    key=f"resume_view_{selected['id']}")
+    archived_view = view == "Архив"
+    resumes = [item for item in all_resumes if bool(item.get("archived")) == archived_view]
     if not resumes:
-        st.info("У этой вакансии пока нет загруженных резюме.")
+        st.info("В архиве пока нет документов." if archived_view else
+                "В активном списке пока нет резюме.")
         return
-    st.subheader("Загруженные резюме")
+    st.subheader("Архивные резюме" if archived_view else "Активные резюме")
+    if archived_view:
+        st.caption("Архивирование скрывает документ из новых запусков. Файл и прошлые результаты сохраняются.")
     st.dataframe(
         [{"ID": item["id"], "Файл": item["filename"],
           "Статус": UPLOAD_LABELS.get(item["status"], item["status"])}
@@ -196,19 +205,32 @@ def _resumes_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
     delete_generation_key = f"resume_delete_generation_{selected['id']}"
     delete_generation = st.session_state.get(delete_generation_key, 0)
     delete_id = st.selectbox(
-        "Удалить ошибочно загруженный документ", [None, *by_id],
+        "Выберите документ для действия", [None, *by_id],
         format_func=lambda value: "Выберите документ" if value is None
         else f"#{value} · {by_id[value]['filename']}",
-        key=f"resume_to_delete_{selected['id']}_{delete_generation}",
+        key=f"resume_action_{selected['id']}_{view}_{delete_generation}",
     )
     if delete_id is not None:
         item = by_id[delete_id]
-        st.warning(f"Удаление документа #{delete_id} · {item['filename']} нельзя отменить.")
+        if archived_view:
+            if st.button("Восстановить в активный список", key=f"restore_resume_{delete_id}"):
+                api.restore_resume(delete_id)
+                st.session_state[delete_generation_key] = delete_generation + 1
+                st.rerun()
+        elif st.button("Архивировать", key=f"archive_resume_{delete_id}"):
+            try:
+                api.archive_resume(delete_id)
+            except ApiError as error:
+                st.error(str(error))
+            else:
+                st.session_state[delete_generation_key] = delete_generation + 1
+                st.rerun()
+        st.warning(f"Удалить навсегда документ #{delete_id} · {item['filename']}? Это нельзя отменить.")
         confirmed = st.checkbox(
-            f"Подтверждаю удаление документа #{delete_id}",
+            f"Подтверждаю удаление навсегда документа #{delete_id}",
             key=f"confirm_resume_delete_{selected['id']}_{delete_id}",
         )
-        if st.button("Удалить резюме", disabled=not confirmed,
+        if st.button("Удалить навсегда", disabled=not confirmed,
                      key=f"delete_resume_{selected['id']}_{delete_id}"):
             try:
                 api.delete_resume(delete_id)
@@ -219,19 +241,29 @@ def _resumes_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
                 st.rerun()
 
 
+def _run_history_picker(api: ApiClient, vacancy_id: int) -> int | None:
+    history = api.list_analyses(vacancy_id)
+    if not history:
+        st.info("У этой вакансии ещё нет анализов.")
+        return None
+    by_id = {item["id"]: item for item in history}
+    options = list(by_id)
+    current = current_run_id(st.session_state, vacancy_id)
+    if current not in by_id:
+        current = options[0]
+    chosen = st.selectbox(
+        "История анализов", options, index=options.index(current),
+        format_func=lambda value: run_label(by_id[value]),
+        key=f"run_history_{vacancy_id}_{options[0]}",
+    )
+    st.session_state.setdefault("run_ids", {})[vacancy_id] = chosen
+    return chosen
+
+
 def _analysis_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
     st.header("Анализ")
-    with st.expander("Открыть предыдущий анализ"):
-        st.caption("ID выдаётся системой при запуске. Введите его, чтобы восстановить просмотр после обновления браузера.")
-        with st.form("open_run"):
-            known_id = st.number_input("ID анализа", min_value=1, step=1)
-            open_run = st.form_submit_button("Открыть анализ")
-        if open_run:
-            run = api.get_analysis(int(known_id))
-            remember_run(st.session_state, run)
-            st.rerun()
     if selected is None:
-        st.info("Выберите вакансию или откройте запуск по ID.")
+        st.info("Выберите вакансию в боковой панели.")
         return
     st.caption("Анализируются активные критерии и загруженные резюме с доступным текстом.")
     if st.button("Запустить анализ", key=f"start_analysis_{selected['id']}"):
@@ -248,9 +280,8 @@ def _analysis_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
         else:
             remember_run(st.session_state, run)
             st.rerun()
-    run_id = current_run_id(st.session_state, selected["id"])
+    run_id = _run_history_picker(api, selected["id"])
     if run_id is None:
-        st.info("Запусков в этой сессии нет. Начните анализ или откройте известный ID.")
         return
     run = api.get_analysis(run_id)
     st.subheader(f"Запуск #{run_id}")
@@ -271,9 +302,8 @@ def _results_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
     if selected is None:
         st.info("Выберите вакансию и откройте запуск в разделе «Анализ».")
         return
-    run_id = current_run_id(st.session_state, selected["id"])
+    run_id = _run_history_picker(api, selected["id"])
     if run_id is None:
-        st.info("Укажите ID существующего запуска в разделе «Анализ» или начните новый.")
         return
     run = api.get_analysis(run_id)
     payload = api.get_results(run_id)
@@ -290,41 +320,53 @@ def _results_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
         return
     if not results:
         st.info("По выбранному статусу нет результатов.")
-    for item in results:
-        label = DOCUMENT_LABELS.get(item["status"], item["status"])
-        with st.expander(f"{item['filename']} · {label}"):
-            if item.get("error"):
-                st.warning(_DOCUMENT_ERRORS.get(item["error"], "Не удалось обработать документ."))
-            findings = findings_with_snapshot(item, run["criterion_snapshot"])
-            if not findings:
-                st.info("Сохранённых выводов по критериям нет.")
-            for pair in findings:
-                criterion, finding = pair["criterion"], pair["finding"]
-                st.write(
-                    f"{criterion['description']} · {PRIORITY_LABELS.get(criterion['priority'], criterion['priority'])} · "
-                    f"{FINDING_LABELS.get(finding['status'], finding['status'])}"
-                )
-                st.caption(FINDING_EXPLANATIONS.get(finding["status"], "Требуется проверка человеком."))
-                if finding.get("evidence_quote"):
-                    st.code(finding["evidence_quote"], language=None)
-                else:
-                    st.caption("Подтверждающая цитата отсутствует.")
-                if finding.get("evidence_page") is not None:
-                    st.caption(f"Проверенная страница PDF: {finding['evidence_page']}")
-                if finding.get("follow_up_question"):
-                    st.write(f"Вопрос для уточнения: {finding['follow_up_question']}")
-    by_id = {item["resume_id"]: item for item in all_results}
+        return
+    st.subheader("Сравнение профессиональных фактов")
+    st.caption("Символы и текст: " + " · ".join(MATRIX_FINDING_LABELS.values()) +
+               ". «Не найдено в тексте» не означает отсутствие навыка. Документы не ранжируются.")
+    columns = {
+        "Документ": st.column_config.TextColumn("Документ", width="medium"),
+        "Статус обработки": st.column_config.TextColumn("Статус обработки", width="medium"),
+        **{matrix_column(item): st.column_config.TextColumn(
+            matrix_column(item), width="medium"
+        ) for item in run["criterion_snapshot"]},
+    }
+    st.dataframe(matrix_rows(results, run["criterion_snapshot"]),
+                 hide_index=True, width="stretch", height=min(650, 62 + 52 * len(results)),
+                 row_height=48, column_config=columns)
+    st.caption("При большом числе критериев таблица прокручивается по горизонтали. Порядок документов сохранён из запуска.")
+    by_id = {item["resume_id"]: item for item in results}
     selected_resume_id = st.selectbox(
-        "Открыть извлечённый текст резюме", [None, *by_id],
-        format_func=lambda value: "Выберите резюме" if value is None else by_id[value]["filename"],
+        "Детали документа из таблицы", list(by_id),
+        format_func=lambda value: f"{by_id[value]['filename']} · #{value}",
+        key=f"result_detail_{run_id}_{chosen}",
     )
-    if selected_resume_id is not None:
-        document = api.get_resume(selected_resume_id)
-        if document.get("extracted_text"):
-            st.text_area("Исходный извлечённый текст", value=document["extracted_text"],
-                         height=300, disabled=True)
+    item = by_id[selected_resume_id]
+    st.subheader(f"{item['filename']} · {DOCUMENT_LABELS.get(item['status'], item['status'])}")
+    if item.get("error"):
+        st.warning(_DOCUMENT_ERRORS.get(item["error"], "Не удалось обработать документ."))
+    for pair in detail_findings(item, run["criterion_snapshot"]):
+        criterion, finding = pair["criterion"], pair["finding"]
+        st.markdown(f"**{criterion['description']}** · {PRIORITY_LABELS.get(criterion['priority'], criterion['priority'])}")
+        if finding is None:
+            st.caption("Нет сохранённого вывода: " + DOCUMENT_LABELS.get(item["status"], item["status"]))
+            continue
+        st.write(FINDING_LABELS.get(finding["status"], finding["status"]))
+        st.caption(FINDING_EXPLANATIONS.get(finding["status"], "Требуется проверка человеком."))
+        if finding.get("evidence_quote"):
+            st.code(finding["evidence_quote"], language=None)
         else:
-            st.info("Извлечённый текст для этого документа недоступен.")
+            st.caption("Подтверждающая цитата отсутствует.")
+        if finding.get("evidence_page") is not None:
+            st.caption(f"Проверенная страница PDF: {finding['evidence_page']}")
+        if finding.get("follow_up_question"):
+            st.write(f"Вопрос для уточнения: {finding['follow_up_question']}")
+    document = api.get_resume(selected_resume_id)
+    if document.get("extracted_text"):
+        st.text_area("Исходный извлечённый текст", value=document["extracted_text"],
+                     height=300, disabled=True)
+    else:
+        st.info("Извлечённый текст для этого документа недоступен.")
 
 
 def main() -> None:

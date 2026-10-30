@@ -3,9 +3,9 @@
 from backend.app.models.base import Base
 from backend.app.models.analysis import AnalysisRun, CriterionFinding, ResumeAnalysis
 from backend.app.models.entities import Criterion, Vacancy
-from backend.app.models.resume import Resume
+from backend.app.models.resume import Resume, ResumeArchive
 
 __all__ = [
     "AnalysisRun", "Base", "Criterion", "CriterionFinding", "Resume",
-    "ResumeAnalysis", "Vacancy",
+    "ResumeAnalysis", "ResumeArchive", "Vacancy",
 ]

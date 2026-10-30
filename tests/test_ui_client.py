@@ -1,6 +1,7 @@
 """Offline HTTP-client and Streamlit presentation tests for S05."""
 
 import json
+import tomllib
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,8 +11,8 @@ from streamlit.testing.v1 import AppTest
 
 from ui.api_client import ApiClient, ApiError, UploadInput
 from ui.presentation import (
-    current_run_id, findings_with_snapshot, remember_run, technical_progress,
-    upload_message, visible_results,
+    current_run_id, detail_findings, findings_with_snapshot, matrix_rows,
+    remember_run, run_label, technical_progress, upload_message, visible_results,
 )
 
 APP_PATH = Path(__file__).resolve().parents[1] / "ui" / "app.py"
@@ -91,6 +92,30 @@ def test_http_client_multipart_upload_and_run_reads() -> None:
     ]
 
 
+def test_http_client_archive_restore_and_history_routes() -> None:
+    seen: list[tuple[str, str, str]] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append((request.method, request.url.path, request.url.query.decode()))
+        if request.url.path.endswith("/analyses"):
+            return httpx.Response(200, json=[{"id": 3, "vacancy_id": 7}])
+        if request.url.path.endswith("/resumes"):
+            return httpx.Response(200, json=[{"id": 5, "archived": True}])
+        return httpx.Response(200, json={"id": 5, "archived": request.url.path.endswith("/archive")})
+
+    with ApiClient(transport=httpx.MockTransport(respond)) as api:
+        assert api.list_resumes(7, include_archived=True)[0]["archived"] is True
+        assert api.archive_resume(5)["archived"] is True
+        assert api.restore_resume(5)["archived"] is False
+        assert api.list_analyses(7)[0]["id"] == 3
+    assert seen == [
+        ("GET", "/vacancies/7/resumes", "include_archived=true"),
+        ("POST", "/resumes/5/archive", ""),
+        ("POST", "/resumes/5/restore", ""),
+        ("GET", "/vacancies/7/analyses", ""),
+    ]
+
+
 @pytest.mark.parametrize(("status", "detail", "message"), [
     (404, None, "не найдена"),
     (409, "active_run_exists", "уже выполняется"),
@@ -98,6 +123,7 @@ def test_http_client_multipart_upload_and_run_reads() -> None:
     (422, "no_ready_resumes", "готовых резюме"),
     (422, "prohibited_criterion", "возраст"),
     (409, "resume_in_analysis", "связан с историей"),
+    (409, "active_run_blocks_archive", "архивирование недоступно"),
     (422, [{"msg": "sensitive input"}], "Проверьте"),
     (500, "private traceback", "Ошибка сервера"),
 ])
@@ -149,6 +175,7 @@ def test_upload_messages_and_snapshot_findings() -> None:
     assert "извлечь" in upload_message({"status": "parse_error", "error": "raw private detail"})
     assert "raw private detail" not in upload_message({"status": "parse_error", "error": "raw private detail"})
     assert "лимит" in upload_message({"status": "rejected", "error": "File exceeds 100 byte limit"})
+    assert "архиве" in upload_message({"status": "ready", "duplicate": True, "archived": True})
     snapshot = [{"id": 2, "description": "Старый критерий", "priority": "required"}]
     result = {"status": "completed", "findings": [{"criterion_id": 2, "status": "not_found",
                                                      "evidence_quote": None, "evidence_page": None}]}
@@ -158,6 +185,49 @@ def test_upload_messages_and_snapshot_findings() -> None:
     assert visible_results([result, {"status": "failed", "findings": []}], "confirmed") == [
         {"status": "failed", "findings": []}
     ]
+
+
+def test_matrix_four_findings_and_document_failures_keep_original_order() -> None:
+    snapshot = [{"id": index, "description": name, "priority": "required"}
+                for index, name in enumerate(("Python", "SQL", "Docker", "Linux"), 1)]
+    results = [
+        {"resume_id": 8, "filename": "first.pdf", "status": "completed", "findings": [
+            {"criterion_id": 1, "status": "confirmed", "evidence_quote": "Python"},
+            {"criterion_id": 2, "status": "mentioned"},
+            {"criterion_id": 3, "status": "not_found"},
+            {"criterion_id": 4, "status": "conflicting"},
+        ]},
+        {"resume_id": 9, "filename": "failed.pdf", "status": "failed", "findings": []},
+        {"resume_id": 10, "filename": "pending.pdf", "status": "pending", "findings": []},
+        {"resume_id": 11, "filename": "running.pdf", "status": "running", "findings": []},
+        {"resume_id": 12, "filename": "interrupted.pdf", "status": "interrupted", "findings": []},
+    ]
+    rows = matrix_rows(results, snapshot)
+    assert [item["Документ"] for item in rows] == [item["filename"] for item in results]
+    assert [rows[0][f"{criterion['description']} · #{criterion['id']}"] for criterion in snapshot] == [
+        "✓ Подтверждено", "≈ Упомянуто", "— Не найдено в тексте", "! Противоречие",
+    ]
+    for row, expected in zip(rows[1:], ("Ошибка", "Ожидает", "Обрабатывается", "Прервано")):
+        assert all(row[f"{criterion['description']} · #{criterion['id']}"] == expected
+                   for criterion in snapshot)
+    assert len(detail_findings(results[0], snapshot)) == 4
+    assert all(pair["finding"] is None for pair in detail_findings(results[1], snapshot))
+    assert visible_results(results, "confirmed") == [results[0], *results[1:]]
+    snapshot[0]["description"] = "Исторический Python"
+    assert "Исторический Python · #1" in matrix_rows(results[:1], snapshot)[0]
+
+
+def test_run_labels_use_explicit_utc_even_for_naive_sqlite_timestamp() -> None:
+    old = {"id": 7, "status": "completed", "created_at": "2026-10-30T12:00:00"}
+    assert run_label(old) == "30.10.2026 12:00 UTC · Завершён · #7"
+    assert run_label({**old, "created_at": "2026-10-30T15:00:00+03:00"}) == run_label(old)
+
+
+def test_streamlit_theme_is_light_and_readable() -> None:
+    config = tomllib.loads((APP_PATH.parents[1] / ".streamlit" / "config.toml").read_text())
+    assert config["theme"]["base"] == "light"
+    assert config["theme"]["baseFontSize"] >= 18
+    assert config["theme"]["backgroundColor"] != config["theme"]["textColor"]
 
 
 def test_technical_progress_and_run_state_survive_rerun() -> None:
@@ -186,6 +256,10 @@ class FakeUiBackend:
         self.start_error: ApiError | None = None
         self.upload_error: ApiError | None = None
         self.delete_error: ApiError | None = None
+        self.archive_error: ApiError | None = None
+        self.runs: list[dict] = []
+        self.archive_calls = 0
+        self.restore_calls = 0
 
     def __enter__(self):
         return self
@@ -230,8 +304,9 @@ class FakeUiBackend:
     def delete_criterion(self, criterion_id):
         self.criteria = [item for item in self.criteria if item["id"] != criterion_id]
 
-    def list_resumes(self, vacancy_id):
-        return [item for item in self.resumes if item["vacancy_id"] == vacancy_id]
+    def list_resumes(self, vacancy_id, *, include_archived=False):
+        return [item for item in self.resumes if item["vacancy_id"] == vacancy_id
+                and (include_archived or not item.get("archived", False))]
 
     def upload_resumes(self, vacancy_id, files):
         self.upload_calls += 1
@@ -240,7 +315,7 @@ class FakeUiBackend:
         results = []
         for file in files:
             item = {"id": len(self.resumes) + 5, "vacancy_id": vacancy_id,
-                    "filename": file.name, "status": "ready"}
+                    "filename": file.name, "status": "ready", "archived": False}
             self.resumes.append(item)
             results.append({"filename": file.name, "status": "ready", "duplicate": False})
         return {"results": results}
@@ -251,14 +326,39 @@ class FakeUiBackend:
             raise self.delete_error
         self.resumes = [item for item in self.resumes if item["id"] != resume_id]
 
+    def archive_resume(self, resume_id):
+        self.archive_calls += 1
+        if self.archive_error:
+            raise self.archive_error
+        item = next(item for item in self.resumes if item["id"] == resume_id)
+        item["archived"] = True
+        return item
+
+    def restore_resume(self, resume_id):
+        self.restore_calls += 1
+        item = next(item for item in self.resumes if item["id"] == resume_id)
+        item["archived"] = False
+        return item
+
     def start_analysis(self, vacancy_id):
         self.start_calls += 1
         if self.start_error:
             raise self.start_error
-        return {"id": 11, "vacancy_id": vacancy_id, "status": "pending"}
+        item = {"id": max((run["id"] for run in self.runs), default=10) + 1,
+                "vacancy_id": vacancy_id, "status": "pending",
+                "created_at": "2026-10-30T10:00:00Z", "started_at": None,
+                "completed_at": None, "provider": "fake", "model": None}
+        self.runs.append(item)
+        return item
+
+    def list_analyses(self, vacancy_id):
+        return sorted((item for item in self.runs if item["vacancy_id"] == vacancy_id),
+                      key=lambda item: item["id"], reverse=True)
 
     def get_analysis(self, run_id):
-        return {"id": run_id, "vacancy_id": 7, "status": "completed_with_errors",
+        stored = next((item for item in self.runs if item["id"] == run_id), None)
+        return {"id": run_id, "vacancy_id": stored["vacancy_id"] if stored else 7,
+                "status": "completed_with_errors",
                 "total": 2, "pending": 0, "running": 0, "completed": 1,
                 "failed": 1, "interrupted": 0,
                 "criterion_snapshot": [
@@ -307,7 +407,7 @@ def test_streamlit_start_rerun_results_snapshot_and_no_repeat_post() -> None:
         assert any("Проверенная страница PDF: 1" in item.value for item in app.caption)
         assert any("Experience: Python" in item.value for item in app.get("code"))
         assert all("пригодности" not in item.value.lower() for item in app.markdown)
-        next(item for item in app.selectbox if item.label == "Открыть извлечённый текст резюме").set_value(5).run()
+        next(item for item in app.selectbox if item.label == "Детали документа из таблицы").set_value(5).run()
         assert any(item.value == "Синтетический исходный текст" for item in app.text_area)
 
 
@@ -361,13 +461,15 @@ def test_streamlit_vacancy_and_criterion_crud_buttons() -> None:
         assert backend.criteria == []
 
 
-def test_streamlit_manual_run_reopen_and_upload_outcome_display() -> None:
+def test_streamlit_history_reopen_and_upload_outcome_display() -> None:
     backend = FakeUiBackend()
+    backend.runs = [{"id": 11, "vacancy_id": 7, "status": "completed",
+                     "created_at": "2026-10-30T10:00:00Z", "started_at": None,
+                     "completed_at": None, "provider": "fake", "model": None}]
     with patch("ui.api_client.ApiClient", lambda: backend):
         app = AppTest.from_file(APP_PATH).run()
+        app.sidebar.selectbox[0].set_value(7).run()
         app.sidebar.radio[0].set_value("Анализ").run()
-        next(item for item in app.number_input if item.label == "ID анализа").set_value(11)
-        _button(app, "Открыть анализ").click().run()
         assert not app.exception
         assert app.session_state["run_ids"][7] == 11
         assert backend.start_calls == 0
@@ -519,12 +621,12 @@ def test_streamlit_resume_delete_requires_confirmation_and_scopes_selection() ->
         app = AppTest.from_file(APP_PATH).run()
         app.sidebar.selectbox[0].set_value(7).run()
         app.sidebar.radio[0].set_value("Резюме").run()
-        picker = next(item for item in app.selectbox if item.label.startswith("Удалить ошибочно"))
+        picker = next(item for item in app.selectbox if item.label == "Выберите документ для действия")
         assert picker.options == ["Выберите документ", "#5 · synthetic.pdf"]
         picker.set_value(5).run()
-        assert _button(app, "Удалить резюме").disabled
+        assert _button(app, "Удалить навсегда").disabled
         app.checkbox(key="confirm_resume_delete_7_5").check().run()
-        _button(app, "Удалить резюме").click().run()
+        _button(app, "Удалить навсегда").click().run()
         assert backend.deleted_resumes == [5]
         assert backend.resumes == [{"id": 6, "vacancy_id": 8,
                                    "filename": "elsewhere.pdf", "status": "ready"}]
@@ -541,9 +643,72 @@ def test_streamlit_resume_delete_conflict_explains_history() -> None:
         app = AppTest.from_file(APP_PATH).run()
         app.sidebar.selectbox[0].set_value(7).run()
         app.sidebar.radio[0].set_value("Резюме").run()
-        next(item for item in app.selectbox if item.label.startswith("Удалить ошибочно")).set_value(5).run()
+        next(item for item in app.selectbox if item.label == "Выберите документ для действия").set_value(5).run()
         app.checkbox(key="confirm_resume_delete_7_5").check().run()
-        _button(app, "Удалить резюме").click().run()
+        _button(app, "Удалить навсегда").click().run()
         assert not app.exception
         assert any("связан с историей анализа" in item.value for item in app.error)
         assert len(backend.resumes) == 1
+
+
+def test_streamlit_history_switches_runs_and_vacancies_without_post() -> None:
+    backend = FakeUiBackend()
+    backend.vacancies.append({"id": 8, "title": "Другая роль", "description": "Синтетическая"})
+    backend.runs = [
+        {"id": run_id, "vacancy_id": vacancy_id, "status": "completed",
+         "created_at": f"2026-10-30T{hour:02}:00:00Z", "started_at": None,
+         "completed_at": None, "provider": "fake", "model": None}
+        for run_id, vacancy_id, hour in [(11, 7, 10), (12, 7, 11), (13, 8, 12)]
+    ]
+    with patch("ui.api_client.ApiClient", lambda: backend):
+        app = AppTest.from_file(APP_PATH).run()
+        app.sidebar.selectbox[0].set_value(7).run()
+        app.sidebar.radio[0].set_value("Анализ").run()
+        assert app.session_state["run_ids"][7] == 12
+        picker = next(item for item in app.selectbox if item.label == "История анализов")
+        assert picker.options == ["30.10.2026 11:00 UTC · Завершён · #12",
+                                  "30.10.2026 10:00 UTC · Завершён · #11"]
+        picker.set_value(11).run()
+        assert app.session_state["run_ids"][7] == 11
+        app.run()
+        assert app.session_state["run_ids"][7] == 11
+        app.sidebar.selectbox[0].set_value(8).run()
+        assert app.session_state["run_ids"][8] == 13
+        assert "#11" not in str(next(item for item in app.selectbox if item.label == "История анализов").options)
+        app.sidebar.selectbox[0].set_value(7).run()
+        assert app.session_state["run_ids"][7] == 11
+        assert backend.start_calls == 0
+
+        fresh = AppTest.from_file(APP_PATH).run()
+        fresh.sidebar.selectbox[0].set_value(7).run()
+        fresh.sidebar.radio[0].set_value("Анализ").run()
+        assert fresh.session_state["run_ids"][7] == 12
+        assert backend.start_calls == 0
+
+
+def test_streamlit_archive_restore_and_active_run_conflict() -> None:
+    backend = FakeUiBackend()
+    backend.resumes = [{"id": 5, "vacancy_id": 7, "filename": "linked.pdf",
+                        "status": "ready", "archived": False}]
+    with patch("ui.api_client.ApiClient", lambda: backend):
+        app = AppTest.from_file(APP_PATH).run()
+        app.sidebar.selectbox[0].set_value(7).run()
+        app.sidebar.radio[0].set_value("Резюме").run()
+        next(item for item in app.selectbox if item.label == "Выберите документ для действия").set_value(5).run()
+        backend.archive_error = ApiError("Пока анализ выполняется, архивирование недоступно.",
+                                         status_code=409, code="active_run_blocks_archive")
+        _button(app, "Архивировать").click().run()
+        assert any("архивирование недоступно" in item.value for item in app.error)
+        assert backend.resumes[0]["archived"] is False
+        backend.archive_error = None
+        _button(app, "Архивировать").click().run()
+        assert backend.resumes[0]["archived"] is True
+        assert backend.archive_calls == 2
+        app.run()
+        assert backend.archive_calls == 2
+        next(item for item in app.radio if item.label == "Список резюме").set_value("Архив").run()
+        next(item for item in app.selectbox if item.label == "Выберите документ для действия").set_value(5).run()
+        _button(app, "Восстановить в активный список").click().run()
+        assert backend.resumes[0]["archived"] is False
+        assert backend.restore_calls == 1
+        assert backend.deleted_resumes == []
