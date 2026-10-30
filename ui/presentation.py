@@ -40,10 +40,17 @@ UPLOAD_LABELS = {
 }
 PRIORITY_LABELS = {"required": "Обязательный", "preferred": "Желательный"}
 MATRIX_FINDING_LABELS = {
-    "confirmed": "✓ Подтверждено",
-    "mentioned": "≈ Упомянуто",
-    "not_found": "— Не найдено в тексте",
-    "conflicting": "! Противоречие",
+    "confirmed": "✅ Подтверждено",
+    "mentioned": "🟡 Упомянуто",
+    "not_found": "⚪ Не найдено в тексте",
+    "conflicting": "⚠️ Противоречие",
+}
+MATRIX_DOCUMENT_LABELS = {
+    "pending": "⏳ Ожидает",
+    "running": "🔄 Обрабатывается",
+    "completed": "✅ Обработано",
+    "failed": "❌ Ошибка",
+    "interrupted": "⏸️ Прервано",
 }
 
 
@@ -66,12 +73,12 @@ def matrix_rows(
     for result in results:
         row = {
             "Документ": result["filename"],
-            "Статус обработки": DOCUMENT_LABELS.get(result["status"], result["status"]),
+            "Статус обработки": MATRIX_DOCUMENT_LABELS.get(result["status"], result["status"]),
         }
         findings = {item["criterion_id"]: item for item in result.get("findings", [])}
         for criterion in snapshot:
             if result["status"] != "completed":
-                value = DOCUMENT_LABELS.get(result["status"], result["status"])
+                value = MATRIX_DOCUMENT_LABELS.get(result["status"], result["status"])
             elif criterion["id"] not in findings:
                 value = "Нет результата"
             else:

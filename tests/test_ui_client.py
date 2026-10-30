@@ -205,9 +205,9 @@ def test_matrix_four_findings_and_document_failures_keep_original_order() -> Non
     rows = matrix_rows(results, snapshot)
     assert [item["Документ"] for item in rows] == [item["filename"] for item in results]
     assert [rows[0][f"{criterion['description']} · #{criterion['id']}"] for criterion in snapshot] == [
-        "✓ Подтверждено", "≈ Упомянуто", "— Не найдено в тексте", "! Противоречие",
+        "✅ Подтверждено", "🟡 Упомянуто", "⚪ Не найдено в тексте", "⚠️ Противоречие",
     ]
-    for row, expected in zip(rows[1:], ("Ошибка", "Ожидает", "Обрабатывается", "Прервано")):
+    for row, expected in zip(rows[1:], ("❌ Ошибка", "⏳ Ожидает", "🔄 Обрабатывается", "⏸️ Прервано")):
         assert all(row[f"{criterion['description']} · #{criterion['id']}"] == expected
                    for criterion in snapshot)
     assert len(detail_findings(results[0], snapshot)) == 4
