@@ -5,11 +5,15 @@ from pathlib import Path
 from typing import BinaryIO, Literal
 from unicodedata import category
 
+from sqlalchemy.exc import IntegrityError
+
 from backend.app.models import Resume
 from backend.app.parsing.documents import ParseResult, parse_document
 from backend.app.repositories.file_storage import FileStorage, StagedUpload, UploadTooLargeError
-from backend.app.repositories.resumes import DuplicateResumeError, ResumeRepository
-from backend.app.services.errors import NotFoundError
+from backend.app.repositories.resumes import (
+    ArchiveDuringRunError, DuplicateResumeError, ResumeRepository,
+)
+from backend.app.services.errors import ConflictError, NotFoundError, ResumeDeleteError
 from backend.app.services.vacancies import VacancyService
 
 UploadStatus = Literal["ready", "unsupported", "parse_error", "rejected"]
@@ -32,6 +36,7 @@ class UploadResult:
     error: str | None = None
     sha256: str | None = None
     size_bytes: int | None = None
+    archived: bool = False
 
 
 def safe_filename(raw: str) -> str:
@@ -53,15 +58,65 @@ class ResumeService:
         self.storage = storage
         self.max_upload_bytes = max_upload_bytes
 
-    def list_for_vacancy(self, vacancy_id: int) -> list[Resume]:
+    def list_for_vacancy(self, vacancy_id: int, *, include_archived: bool = False) -> list[Resume]:
         self.vacancies.get(vacancy_id)
-        return self.repository.list_for_vacancy(vacancy_id)
+        return self.repository.list_for_vacancy(vacancy_id, include_archived=include_archived)
 
     def get(self, resume_id: int) -> Resume:
         resume = self.repository.get(resume_id)
         if resume is None:
             raise NotFoundError(f"Resume {resume_id} not found")
         return resume
+
+    def archive(self, resume_id: int) -> Resume:
+        try:
+            resume = self.repository.archive(resume_id)
+        except ArchiveDuringRunError:
+            raise ConflictError("active_run_blocks_archive") from None
+        if resume is None:
+            raise NotFoundError(f"Resume {resume_id} not found")
+        return resume
+
+    def restore(self, resume_id: int) -> Resume:
+        resume = self.repository.restore(resume_id)
+        if resume is None:
+            raise NotFoundError(f"Resume {resume_id} not found")
+        return resume
+
+    def delete(self, resume_id: int) -> None:
+        resume = self.get(resume_id)
+        try:
+            if self.repository.is_in_analysis(resume_id):
+                raise ConflictError("resume_in_analysis")
+        except ConflictError:
+            raise
+        except Exception:
+            raise ResumeDeleteError from None
+
+        quarantined = None
+        if resume.storage_key:
+            try:
+                quarantined = self.storage.quarantine(resume.storage_key)
+            except OSError:
+                raise ResumeDeleteError from None
+        try:
+            self.repository.delete(resume)
+        except Exception as error:
+            if quarantined is not None:
+                try:
+                    self.storage.restore(resume.storage_key, quarantined)
+                except OSError:
+                    raise ResumeDeleteError from None
+            # The FK also catches a run created after the initial check.
+            if isinstance(error, IntegrityError):
+                raise ConflictError("resume_in_analysis") from None
+            raise ResumeDeleteError from None
+        if quarantined is not None:
+            try:
+                self.storage.purge(quarantined)
+            except OSError:
+                # The DB no longer references the private file; leave it in quarantine.
+                pass
 
     def upload_batch(self, vacancy_id: int, files: list[UploadInput]) -> list[UploadResult]:
         self.vacancies.get(vacancy_id)
@@ -105,7 +160,7 @@ class ResumeService:
                         page_count=parsed.page_count,
                         source_pages=parsed.source_pages,
                     )
-                    return self._result(filename, staged, parsed, resume.id)
+                    return self._result(filename, staged, parsed, resume.id, archived=resume.archived)
                 return self._existing_result(filename, staged, parsed, extension, existing)
 
             if extension in SUPPORTED_EXTENSIONS:
@@ -156,7 +211,8 @@ class ResumeService:
 
     @staticmethod
     def _result(
-        filename: str, staged: StagedUpload, parsed: ParseResult, resume_id: int | None = None
+        filename: str, staged: StagedUpload, parsed: ParseResult,
+        resume_id: int | None = None, *, archived: bool = False,
     ) -> UploadResult:
         return UploadResult(
             filename=filename,
@@ -165,6 +221,7 @@ class ResumeService:
             error=parsed.error,
             sha256=staged.sha256,
             size_bytes=staged.size_bytes,
+            archived=archived,
         )
 
     @classmethod
@@ -198,4 +255,5 @@ class ResumeService:
             error=resume.parse_error,
             sha256=resume.sha256,
             size_bytes=resume.size_bytes,
+            archived=resume.archived,
         )

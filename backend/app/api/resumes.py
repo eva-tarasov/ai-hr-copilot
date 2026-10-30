@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException
@@ -66,10 +66,29 @@ async def upload_resumes(vacancy_id: int, request: Request, service: Resumes) ->
 
 
 @router.get("/vacancies/{vacancy_id}/resumes", response_model=list[ResumeSummary])
-def list_resumes(vacancy_id: int, service: Resumes) -> list[ResumeSummary]:
-    return [ResumeSummary.model_validate(item) for item in service.list_for_vacancy(vacancy_id)]
+def list_resumes(
+    vacancy_id: int, service: Resumes, include_archived: bool = Query(False)
+) -> list[ResumeSummary]:
+    return [ResumeSummary.model_validate(item) for item in service.list_for_vacancy(
+        vacancy_id, include_archived=include_archived
+    )]
 
 
 @router.get("/resumes/{resume_id}", response_model=ResumeDetail)
 def get_resume(resume_id: int, service: Resumes) -> ResumeDetail:
     return ResumeDetail.model_validate(service.get(resume_id))
+
+
+@router.post("/resumes/{resume_id}/archive", response_model=ResumeSummary)
+def archive_resume(resume_id: int, service: Resumes) -> ResumeSummary:
+    return ResumeSummary.model_validate(service.archive(resume_id))
+
+
+@router.post("/resumes/{resume_id}/restore", response_model=ResumeSummary)
+def restore_resume(resume_id: int, service: Resumes) -> ResumeSummary:
+    return ResumeSummary.model_validate(service.restore(resume_id))
+
+
+@router.delete("/resumes/{resume_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_resume(resume_id: int, service: Resumes) -> None:
+    service.delete(resume_id)

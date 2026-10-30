@@ -15,7 +15,7 @@ from backend.app.api.vacancies import router as vacancies_router
 from backend.app.core.config import get_settings
 from backend.app.core.database import create_db_engine, create_schema, create_session_factory
 from backend.app.repositories.file_storage import FileStorage
-from backend.app.services.errors import ConflictError, InvalidRunError, NotFoundError
+from backend.app.services.errors import ConflictError, InvalidRunError, NotFoundError, ResumeDeleteError
 from backend.app.jobs.dispatcher import BatchDispatcher
 from backend.app.llm.factory import make_provider
 from backend.app.llm.provider import LLMProvider
@@ -72,6 +72,10 @@ def create_app(
     @app.exception_handler(InvalidRunError)
     async def invalid_run(request: Request, error: InvalidRunError) -> JSONResponse:
         return JSONResponse(status_code=422, content={"detail": str(error)})
+
+    @app.exception_handler(ResumeDeleteError)
+    async def resume_delete_failed(request: Request, error: ResumeDeleteError) -> JSONResponse:
+        return JSONResponse(status_code=503, content={"detail": "Could not delete resume"})
 
     app.include_router(health_router)
     app.include_router(vacancies_router)

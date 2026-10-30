@@ -27,6 +27,8 @@ class ResumeSummary(BaseModel):
     size_bytes: int
     file_type: str | None
     page_count: int
+    archived: bool
+    archived_at: datetime | None
 
 
 class ResumeDetail(ResumeSummary):
@@ -44,6 +46,7 @@ class UploadFileResult(BaseModel):
     error: str | None
     sha256: str | None
     size_bytes: int | None
+    archived: bool
 
 
 class UploadBatchResponse(BaseModel):

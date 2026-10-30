@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from backend.app.llm.contracts import CriterionSnapshot
 from backend.app.llm.errors import AnalysisInputError
 from backend.app.llm.provider import LLMProvider
+from backend.app.models import AnalysisRun
 from backend.app.repositories.analyses import ActiveRunError, AnalysisRepository
 from backend.app.repositories.criteria import CriterionRepository
 from backend.app.repositories.resumes import ResumeRepository
@@ -25,6 +26,8 @@ class BatchAnalysisService:
         self.provider = provider
 
     def create(self, vacancy_id: int) -> int:
+        # Archive transitions use the same SQLite write lock before reading resumes.
+        self.analyses.session.connection().exec_driver_sql("BEGIN IMMEDIATE")
         if self.vacancies.get(vacancy_id) is None:
             raise NotFoundError("Vacancy not found")
         criteria = [item for item in self.criteria.list_for_vacancy(vacancy_id) if item.active]
@@ -54,6 +57,11 @@ class BatchAnalysisService:
         except ActiveRunError:
             raise ConflictError("active_run_exists") from None
         return run.id
+
+    def list_for_vacancy(self, vacancy_id: int) -> list[AnalysisRun]:
+        if self.vacancies.get(vacancy_id) is None:
+            raise NotFoundError("Vacancy not found")
+        return self.analyses.list_for_vacancy(vacancy_id)
 
     def get(self, run_id: int) -> dict[str, object]:
         run = self.analyses.get(run_id)

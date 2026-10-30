@@ -1,0 +1,11 @@
+[server]
+maxUploadSize = 10
+
+[theme]
+base = "light"
+backgroundColor = "#F7F9FC"
+secondaryBackgroundColor = "#FFFFFF"
+textColor = "#24344D"
+primaryColor = "#3366A0"
+baseFontSize = 18
+headingFontSizes = ["2.5rem", "2rem", "1.5rem"]

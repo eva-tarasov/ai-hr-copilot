@@ -43,6 +43,12 @@ class AnalysisRepository:
     def get(self, run_id: int) -> AnalysisRun | None:
         return self.session.get(AnalysisRun, run_id)
 
+    def list_for_vacancy(self, vacancy_id: int) -> list[AnalysisRun]:
+        return list(self.session.scalars(
+            select(AnalysisRun).where(AnalysisRun.vacancy_id == vacancy_id)
+            .order_by(AnalysisRun.created_at.desc(), AnalysisRun.id.desc())
+        ))
+
     def documents(self, run_id: int) -> list[tuple[ResumeAnalysis, Resume]]:
         return list(self.session.execute(
             select(ResumeAnalysis, Resume)
