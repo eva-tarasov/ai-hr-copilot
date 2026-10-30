@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from backend.app.models import Resume
+from backend.app.models import Resume, ResumeAnalysis
 
 
 class DuplicateResumeError(Exception):
@@ -25,6 +25,19 @@ class ResumeRepository:
     def get_by_hash(self, vacancy_id: int, sha256: str) -> Resume | None:
         statement = select(Resume).where(Resume.vacancy_id == vacancy_id, Resume.sha256 == sha256)
         return self.session.scalar(statement)
+
+    def is_in_analysis(self, resume_id: int) -> bool:
+        return self.session.scalar(
+            select(ResumeAnalysis.id).where(ResumeAnalysis.resume_id == resume_id).limit(1)
+        ) is not None
+
+    def delete(self, resume: Resume) -> None:
+        self.session.delete(resume)
+        try:
+            self.session.commit()
+        except Exception:
+            self.session.rollback()
+            raise
 
     def create(self, **fields: object) -> Resume:
         resume = Resume(**fields)

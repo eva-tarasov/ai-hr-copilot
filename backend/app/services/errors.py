@@ -11,3 +11,7 @@ class ConflictError(Exception):
 
 class InvalidRunError(Exception):
     pass
+
+
+class ResumeDeleteError(Exception):
+    pass

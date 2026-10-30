@@ -5,11 +5,13 @@ from pathlib import Path
 from typing import BinaryIO, Literal
 from unicodedata import category
 
+from sqlalchemy.exc import IntegrityError
+
 from backend.app.models import Resume
 from backend.app.parsing.documents import ParseResult, parse_document
 from backend.app.repositories.file_storage import FileStorage, StagedUpload, UploadTooLargeError
 from backend.app.repositories.resumes import DuplicateResumeError, ResumeRepository
-from backend.app.services.errors import NotFoundError
+from backend.app.services.errors import ConflictError, NotFoundError, ResumeDeleteError
 from backend.app.services.vacancies import VacancyService
 
 UploadStatus = Literal["ready", "unsupported", "parse_error", "rejected"]
@@ -62,6 +64,41 @@ class ResumeService:
         if resume is None:
             raise NotFoundError(f"Resume {resume_id} not found")
         return resume
+
+    def delete(self, resume_id: int) -> None:
+        resume = self.get(resume_id)
+        try:
+            if self.repository.is_in_analysis(resume_id):
+                raise ConflictError("resume_in_analysis")
+        except ConflictError:
+            raise
+        except Exception:
+            raise ResumeDeleteError from None
+
+        quarantined = None
+        if resume.storage_key:
+            try:
+                quarantined = self.storage.quarantine(resume.storage_key)
+            except OSError:
+                raise ResumeDeleteError from None
+        try:
+            self.repository.delete(resume)
+        except Exception as error:
+            if quarantined is not None:
+                try:
+                    self.storage.restore(resume.storage_key, quarantined)
+                except OSError:
+                    raise ResumeDeleteError from None
+            # The FK also catches a run created after the initial check.
+            if isinstance(error, IntegrityError):
+                raise ConflictError("resume_in_analysis") from None
+            raise ResumeDeleteError from None
+        if quarantined is not None:
+            try:
+                self.storage.purge(quarantined)
+            except OSError:
+                # The DB no longer references the private file; leave it in quarantine.
+                pass
 
     def upload_batch(self, vacancy_id: int, files: list[UploadInput]) -> list[UploadResult]:
         self.vacancies.get(vacancy_id)

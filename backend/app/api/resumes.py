@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from starlette.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException
@@ -73,3 +73,8 @@ def list_resumes(vacancy_id: int, service: Resumes) -> list[ResumeSummary]:
 @router.get("/resumes/{resume_id}", response_model=ResumeDetail)
 def get_resume(resume_id: int, service: Resumes) -> ResumeDetail:
     return ResumeDetail.model_validate(service.get(resume_id))
+
+
+@router.delete("/resumes/{resume_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_resume(resume_id: int, service: Resumes) -> None:
+    service.delete(resume_id)

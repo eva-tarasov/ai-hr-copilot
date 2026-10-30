@@ -38,6 +38,8 @@ def _selected_vacancy(vacancies: Sequence[dict[str, Any]]) -> dict[str, Any] | N
         index=0 if current is None else list(by_id).index(current) + 1,
         format_func=lambda value: "Выберите вакансию" if value is None else by_id[value]["title"],
     )
+    if selected != current:
+        st.session_state["vacancy_mode"] = "edit" if selected is not None else "create"
     st.session_state["selected_vacancy_id"] = selected
     return by_id.get(selected)
 
@@ -52,26 +54,36 @@ def _vacancies_page(api: ApiClient, vacancies: list[dict[str, Any]],
         )
     else:
         st.info("Пока нет вакансий. Создайте первую вакансию ниже.")
-    with st.form("create_vacancy"):
+    mode = st.session_state.get("vacancy_mode", "edit" if selected else "create")
+    if selected is not None and mode != "create":
+        if st.button("Новая вакансия"):
+            st.session_state["vacancy_mode"] = "create"
+            st.rerun()
+        with st.form(f"edit_vacancy_{selected['id']}"):
+            st.subheader("Редактировать выбранную вакансию")
+            edited_title = st.text_input("Название вакансии", value=selected["title"])
+            edited_description = st.text_area("Описание вакансии", value=selected["description"])
+            save = st.form_submit_button("Сохранить вакансию")
+        if save:
+            with st.spinner("Сохраняем вакансию…"):
+                api.update_vacancy(selected["id"], edited_title, edited_description)
+            st.rerun()
+        return
+    if selected is not None and st.button("Вернуться к вакансии"):
+        st.session_state["vacancy_mode"] = "edit"
+        st.rerun()
+    generation = st.session_state.get("vacancy_form_generation", 0)
+    with st.form(f"create_vacancy_{generation}"):
         st.subheader("Новая вакансия")
-        title = st.text_input("Название", key="new_vacancy_title")
-        description = st.text_area("Описание", key="new_vacancy_description")
+        title = st.text_input("Название", key=f"new_vacancy_title_{generation}")
+        description = st.text_area("Описание", key=f"new_vacancy_description_{generation}")
         create = st.form_submit_button("Создать вакансию")
     if create:
         with st.spinner("Создаём вакансию…"):
             vacancy = api.create_vacancy(title, description)
+        st.session_state["vacancy_form_generation"] = generation + 1
         st.session_state["selected_vacancy_id"] = vacancy["id"]
-        st.rerun()
-    if selected is None:
-        return
-    with st.form(f"edit_vacancy_{selected['id']}"):
-        st.subheader("Редактировать выбранную вакансию")
-        edited_title = st.text_input("Название вакансии", value=selected["title"])
-        edited_description = st.text_area("Описание вакансии", value=selected["description"])
-        save = st.form_submit_button("Сохранить вакансию")
-    if save:
-        with st.spinner("Сохраняем вакансию…"):
-            api.update_vacancy(selected["id"], edited_title, edited_description)
+        st.session_state["vacancy_mode"] = "edit"
         st.rerun()
 
 
@@ -85,24 +97,30 @@ def _criteria_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
         st.dataframe(
             [{"ID": item["id"], "Критерий": item["description"],
               "Приоритет": PRIORITY_LABELS.get(item["priority"], item["priority"]),
-              "Активен": item["active"], "Порядок": item["display_order"]}
+              "Статус": "Активен" if item["active"] else "Выключен",
+              "Порядок": item["display_order"]}
              for item in criteria], hide_index=True, width="stretch",
         )
     else:
         st.info("У этой вакансии пока нет критериев. Добавьте первый ниже.")
-    with st.form(f"create_criterion_{selected['id']}"):
+    generation = st.session_state.get(f"criterion_form_generation_{selected['id']}", 0)
+    with st.form(f"create_criterion_{selected['id']}_{generation}"):
         st.subheader("Добавить критерий")
-        description = st.text_input("Описание критерия")
+        description = st.text_input("Описание критерия", key=f"criterion_description_{selected['id']}_{generation}")
         priority = st.selectbox("Приоритет", ["required", "preferred"],
-                                format_func=lambda value: PRIORITY_LABELS[value])
-        active = st.checkbox("Активен", value=True)
+                                format_func=lambda value: PRIORITY_LABELS[value],
+                                key=f"criterion_priority_{selected['id']}_{generation}")
+        active = st.checkbox("Активен", value=True,
+                             key=f"criterion_active_{selected['id']}_{generation}")
         create = st.form_submit_button("Добавить критерий")
     if create:
         with st.spinner("Сохраняем критерий…"):
             api.create_criterion(selected["id"], description, priority, active)
+        st.session_state[f"criterion_form_generation_{selected['id']}"] = generation + 1
         st.rerun()
     for item in criteria:
-        with st.expander(f"#{item['id']} · {item['description']}"):
+        active_label = "Активен" if item["active"] else "Выключен"
+        with st.expander(f"#{item['id']} · {item['description']} · {active_label}"):
             with st.form(f"edit_criterion_{item['id']}"):
                 edited_description = st.text_input("Описание", value=item["description"])
                 edited_priority = st.selectbox(
@@ -134,9 +152,12 @@ def _resumes_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
         st.info("Сначала выберите вакансию в боковой панели.")
         return
     st.caption("PDF или DOCX; по умолчанию до 10 МБ на файл и до 20 файлов за запрос.")
-    with st.form(f"upload_{selected['id']}"):
+    generation_key = f"upload_generation_{selected['id']}"
+    generation = st.session_state.get(generation_key, 0)
+    with st.form(f"upload_{selected['id']}_{generation}"):
         files = st.file_uploader("Выберите файлы", type=["pdf", "docx"],
-                                 accept_multiple_files=True, key=f"files_{selected['id']}")
+                                 accept_multiple_files=True,
+                                 key=f"files_{selected['id']}_{generation}")
         submit = st.form_submit_button("Загрузить резюме")
     if submit:
         if not files:
@@ -149,6 +170,7 @@ def _resumes_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
             with st.spinner("Загружаем и проверяем файлы…"):
                 outcome = api.upload_resumes(selected["id"], inputs)
             st.session_state.setdefault("last_upload_results", {})[selected["id"]] = outcome.get("results", [])
+            st.session_state[generation_key] = generation + 1
             st.rerun()
     outcomes = st.session_state.get("last_upload_results", {}).get(selected["id"], [])
     if outcomes:
@@ -170,25 +192,62 @@ def _resumes_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
           "Статус": UPLOAD_LABELS.get(item["status"], item["status"])}
          for item in resumes], hide_index=True, width="stretch",
     )
+    by_id = {item["id"]: item for item in resumes}
+    delete_generation_key = f"resume_delete_generation_{selected['id']}"
+    delete_generation = st.session_state.get(delete_generation_key, 0)
+    delete_id = st.selectbox(
+        "Удалить ошибочно загруженный документ", [None, *by_id],
+        format_func=lambda value: "Выберите документ" if value is None
+        else f"#{value} · {by_id[value]['filename']}",
+        key=f"resume_to_delete_{selected['id']}_{delete_generation}",
+    )
+    if delete_id is not None:
+        item = by_id[delete_id]
+        st.warning(f"Удаление документа #{delete_id} · {item['filename']} нельзя отменить.")
+        confirmed = st.checkbox(
+            f"Подтверждаю удаление документа #{delete_id}",
+            key=f"confirm_resume_delete_{selected['id']}_{delete_id}",
+        )
+        if st.button("Удалить резюме", disabled=not confirmed,
+                     key=f"delete_resume_{selected['id']}_{delete_id}"):
+            try:
+                api.delete_resume(delete_id)
+            except ApiError as error:
+                st.error(str(error))
+            else:
+                st.session_state[delete_generation_key] = delete_generation + 1
+                st.rerun()
 
 
 def _analysis_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
     st.header("Анализ")
-    with st.form("open_run"):
-        known_id = st.number_input("Открыть существующий запуск по ID", min_value=1, step=1)
-        open_run = st.form_submit_button("Открыть запуск")
-    if open_run:
-        run = api.get_analysis(int(known_id))
-        remember_run(st.session_state, run)
-        st.rerun()
+    with st.expander("Открыть предыдущий анализ"):
+        st.caption("ID выдаётся системой при запуске. Введите его, чтобы восстановить просмотр после обновления браузера.")
+        with st.form("open_run"):
+            known_id = st.number_input("ID анализа", min_value=1, step=1)
+            open_run = st.form_submit_button("Открыть анализ")
+        if open_run:
+            run = api.get_analysis(int(known_id))
+            remember_run(st.session_state, run)
+            st.rerun()
     if selected is None:
         st.info("Выберите вакансию или откройте запуск по ID.")
         return
+    st.caption("Анализируются активные критерии и загруженные резюме с доступным текстом.")
     if st.button("Запустить анализ", key=f"start_analysis_{selected['id']}"):
-        with st.spinner("Создаём запуск…"):
-            run = api.start_analysis(selected["id"])
-        remember_run(st.session_state, run)
-        st.rerun()
+        try:
+            with st.spinner("Создаём запуск…"):
+                run = api.start_analysis(selected["id"])
+        except ApiError as error:
+            st.error(str(error))
+            if error.code == "prohibited_criterion":
+                active = [item for item in api.list_criteria(selected["id"]) if item["active"]]
+                st.write("Активные критерии для проверки:")
+                for item in active:
+                    st.write(f"• #{item['id']} · {item['description']}")
+        else:
+            remember_run(st.session_state, run)
+            st.rerun()
     run_id = current_run_id(st.session_state, selected["id"])
     if run_id is None:
         st.info("Запусков в этой сессии нет. Начните анализ или откройте известный ID.")
@@ -203,7 +262,7 @@ def _analysis_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
     progress = technical_progress(run)
     st.progress(progress, text=f"Завершено обработок: {round(progress * 100)}%")
     st.caption("Это только ход обработки документов, не оценка кандидатов.")
-    st.button("Обновить статус", key=f"refresh_run_{run_id}")
+    st.button("Обновить", key=f"refresh_run_{run_id}")
     st.caption("Обновление выполняется по нажатию кнопки; автоматического опроса нет.")
 
 

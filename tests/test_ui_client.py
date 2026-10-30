@@ -79,12 +79,14 @@ def test_http_client_multipart_upload_and_run_reads() -> None:
         assert [item["status"] for item in upload["results"]] == ["ready", "parse_error"]
         assert api.list_resumes(7) == []
         assert api.get_resume(5)["extracted_text"] == "synthetic text"
+        assert api.delete_resume(5) is None
         assert api.start_analysis(7)["id"] == 11
         assert api.get_analysis(11)["status"] == "running"
         assert api.get_results(11) == {"run_id": 11, "results": []}
     assert seen == [
         ("POST", "/vacancies/7/resumes"), ("GET", "/vacancies/7/resumes"),
-        ("GET", "/resumes/5"), ("POST", "/vacancies/7/analyses"),
+        ("GET", "/resumes/5"), ("DELETE", "/resumes/5"),
+        ("POST", "/vacancies/7/analyses"),
         ("GET", "/analyses/11"), ("GET", "/analyses/11/results"),
     ]
 
@@ -92,7 +94,10 @@ def test_http_client_multipart_upload_and_run_reads() -> None:
 @pytest.mark.parametrize(("status", "detail", "message"), [
     (404, None, "не найдена"),
     (409, "active_run_exists", "уже выполняется"),
-    (422, "no_active_criteria", "активный критерий"),
+    (422, "no_active_criteria", "активных критериев"),
+    (422, "no_ready_resumes", "готовых резюме"),
+    (422, "prohibited_criterion", "возраст"),
+    (409, "resume_in_analysis", "связан с историей"),
     (422, [{"msg": "sensitive input"}], "Проверьте"),
     (500, "private traceback", "Ошибка сервера"),
 ])
@@ -175,6 +180,12 @@ class FakeUiBackend:
         self.create_calls = 0
         self.update_calls = 0
         self.upload_calls = 0
+        self.criterion_create_calls = 0
+        self.resumes: list[dict] = []
+        self.deleted_resumes: list[int] = []
+        self.start_error: ApiError | None = None
+        self.upload_error: ApiError | None = None
+        self.delete_error: ApiError | None = None
 
     def __enter__(self):
         return self
@@ -190,7 +201,8 @@ class FakeUiBackend:
 
     def create_vacancy(self, title, description):
         self.create_calls += 1
-        item = {"id": 7, "title": title, "description": description}
+        item = {"id": max((vacancy["id"] for vacancy in self.vacancies), default=6) + 1,
+                "title": title, "description": description}
         self.vacancies.append(item)
         return item
 
@@ -204,7 +216,8 @@ class FakeUiBackend:
         return self.criteria
 
     def create_criterion(self, vacancy_id, description, priority, active):
-        item = {"id": 3, "vacancy_id": vacancy_id, "description": description,
+        self.criterion_create_calls += 1
+        item = {"id": len(self.criteria) + 3, "vacancy_id": vacancy_id, "description": description,
                 "priority": priority, "active": active, "display_order": 0}
         self.criteria.append(item)
         return item
@@ -218,10 +231,30 @@ class FakeUiBackend:
         self.criteria = [item for item in self.criteria if item["id"] != criterion_id]
 
     def list_resumes(self, vacancy_id):
-        return []
+        return [item for item in self.resumes if item["vacancy_id"] == vacancy_id]
+
+    def upload_resumes(self, vacancy_id, files):
+        self.upload_calls += 1
+        if self.upload_error:
+            raise self.upload_error
+        results = []
+        for file in files:
+            item = {"id": len(self.resumes) + 5, "vacancy_id": vacancy_id,
+                    "filename": file.name, "status": "ready"}
+            self.resumes.append(item)
+            results.append({"filename": file.name, "status": "ready", "duplicate": False})
+        return {"results": results}
+
+    def delete_resume(self, resume_id):
+        self.deleted_resumes.append(resume_id)
+        if self.delete_error:
+            raise self.delete_error
+        self.resumes = [item for item in self.resumes if item["id"] != resume_id]
 
     def start_analysis(self, vacancy_id):
         self.start_calls += 1
+        if self.start_error:
+            raise self.start_error
         return {"id": 11, "vacancy_id": vacancy_id, "status": "pending"}
 
     def get_analysis(self, run_id):
@@ -299,16 +332,19 @@ def test_streamlit_vacancy_and_criterion_crud_buttons() -> None:
     with patch("ui.api_client.ApiClient", lambda: backend):
         app = AppTest.from_file(APP_PATH).run()
         assert any("Пока нет вакансий" in item.value for item in app.info)
-        app.text_input(key="new_vacancy_title").set_value("Инженер")
-        app.text_area(key="new_vacancy_description").set_value("Синтетическая роль")
+        app.text_input(key="new_vacancy_title_0").set_value("Инженер")
+        app.text_area(key="new_vacancy_description_0").set_value("Синтетическая роль")
         _button(app, "Создать вакансию").click().run()
         assert not app.exception
         assert backend.create_calls == 1
         assert app.session_state["selected_vacancy_id"] == 7
+        assert app.session_state["vacancy_form_generation"] == 1
+        assert all(item.label != "Создать вакансию" for item in app.button)
         next(item for item in app.text_input if item.label == "Название вакансии").set_value("Старший инженер")
         _button(app, "Сохранить вакансию").click().run()
         assert backend.update_calls == 1
         assert backend.vacancies[0]["title"] == "Старший инженер"
+        assert next(item for item in app.text_input if item.label == "Название вакансии").value == "Старший инженер"
 
         app.sidebar.radio[0].set_value("Критерии").run()
         next(item for item in app.text_input if item.label == "Описание критерия").set_value("Python")
@@ -330,8 +366,8 @@ def test_streamlit_manual_run_reopen_and_upload_outcome_display() -> None:
     with patch("ui.api_client.ApiClient", lambda: backend):
         app = AppTest.from_file(APP_PATH).run()
         app.sidebar.radio[0].set_value("Анализ").run()
-        next(item for item in app.number_input if item.label.startswith("Открыть существующий")).set_value(11)
-        _button(app, "Открыть запуск").click().run()
+        next(item for item in app.number_input if item.label == "ID анализа").set_value(11)
+        _button(app, "Открыть анализ").click().run()
         assert not app.exception
         assert app.session_state["run_ids"][7] == 11
         assert backend.start_calls == 0
@@ -348,3 +384,166 @@ def test_streamlit_manual_run_reopen_and_upload_outcome_display() -> None:
         assert table["Статус"].tolist() == ["Готово", "Ошибка извлечения текста"]
         assert "private parsing detail" not in table.to_string()
         assert backend.upload_calls == 0
+
+
+def test_streamlit_vacancy_modes_clear_creation_and_do_not_repeat_post() -> None:
+    backend = FakeUiBackend()
+    with patch("ui.api_client.ApiClient", lambda: backend):
+        app = AppTest.from_file(APP_PATH).run()
+        app.sidebar.selectbox[0].set_value(7).run()
+        assert not any(item.label == "Создать вакансию" for item in app.button)
+        assert any(item.label == "Сохранить вакансию" for item in app.button)
+        _button(app, "Новая вакансия").click().run()
+        assert any(item.label == "Создать вакансию" for item in app.button)
+        assert not any(item.label == "Сохранить вакансию" for item in app.button)
+        app.text_input(key="new_vacancy_title_0").set_value("Новая роль")
+        app.text_area(key="new_vacancy_description_0").set_value("Синтетическое описание")
+        _button(app, "Создать вакансию").click().run()
+        assert not app.exception
+        assert backend.create_calls == 1
+        assert app.session_state["selected_vacancy_id"] == 8
+        assert app.session_state["vacancy_form_generation"] == 1
+        assert any(item.label == "Сохранить вакансию" for item in app.button)
+        app.run()
+        assert backend.create_calls == 1
+        _button(app, "Новая вакансия").click().run()
+        assert app.text_input(key="new_vacancy_title_1").value == ""
+        assert app.text_area(key="new_vacancy_description_1").value == ""
+
+
+def test_streamlit_criterion_form_resets_and_edit_does_not_create() -> None:
+    backend = FakeUiBackend()
+    with patch("ui.api_client.ApiClient", lambda: backend):
+        app = AppTest.from_file(APP_PATH).run()
+        app.sidebar.selectbox[0].set_value(7).run()
+        app.sidebar.radio[0].set_value("Критерии").run()
+        app.text_input(key="criterion_description_7_0").set_value("Python")
+        next(item for item in app.selectbox if item.label == "Приоритет").set_value("preferred")
+        app.checkbox(key="criterion_active_7_0").uncheck()
+        _button(app, "Добавить критерий").click().run()
+        assert not app.exception
+        assert backend.criterion_create_calls == 1
+        assert app.text_input(key="criterion_description_7_1").value == ""
+        assert app.selectbox(key="criterion_priority_7_1").value == "required"
+        assert app.checkbox(key="criterion_active_7_1").value is True
+        assert any("Выключен" in item.label for item in app.get("expander"))
+        app.run()
+        assert backend.criterion_create_calls == 1
+        next(item for item in app.text_input if item.label == "Описание").set_value("SQL")
+        _button(app, "Сохранить критерий").click().run()
+        assert backend.criterion_create_calls == 1
+        assert backend.criteria[0]["description"] == "SQL"
+        app.text_input(key="criterion_description_7_1").set_value("Docker")
+        _button(app, "Добавить критерий").click().run()
+        assert backend.criterion_create_calls == 2
+        assert len(backend.criteria) == 2
+
+
+def test_streamlit_upload_clears_picker_and_does_not_repeat_post() -> None:
+    backend = FakeUiBackend()
+    with patch("ui.api_client.ApiClient", lambda: backend):
+        app = AppTest.from_file(APP_PATH).run()
+        app.sidebar.selectbox[0].set_value(7).run()
+        app.sidebar.radio[0].set_value("Резюме").run()
+        app.file_uploader[0].upload("first.pdf", b"synthetic first", "application/pdf")
+        _button(app, "Загрузить резюме").click().run()
+        assert not app.exception
+        assert backend.upload_calls == 1
+        assert app.session_state["upload_generation_7"] == 1
+        assert app.file_uploader[0].key == "files_7_1"
+        assert app.file_uploader[0].value == []
+        assert app.dataframe[0].value["Файл"].tolist() == ["first.pdf"]
+        app.run()
+        assert backend.upload_calls == 1
+        app.file_uploader[0].upload("second.docx", b"synthetic second", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+        _button(app, "Загрузить резюме").click().run()
+        assert backend.upload_calls == 2
+        assert app.file_uploader[0].key == "files_7_2"
+        assert app.file_uploader[0].value == []
+        assert app.dataframe[0].value["Файл"].tolist() == ["second.docx"]
+
+
+def test_streamlit_upload_error_keeps_picker_for_retry() -> None:
+    backend = FakeUiBackend()
+    backend.upload_error = ApiError("Сервер недоступен. Запустите FastAPI и повторите действие.")
+    with patch("ui.api_client.ApiClient", lambda: backend):
+        app = AppTest.from_file(APP_PATH).run()
+        app.sidebar.selectbox[0].set_value(7).run()
+        app.sidebar.radio[0].set_value("Резюме").run()
+        app.file_uploader[0].upload("retry.pdf", b"synthetic", "application/pdf")
+        _button(app, "Загрузить резюме").click().run()
+        assert not app.exception
+        assert backend.upload_calls == 1
+        assert app.file_uploader[0].key == "files_7_0"
+        assert len(app.file_uploader[0].value) == 1
+        backend.upload_error = None
+        _button(app, "Загрузить резюме").click().run()
+        assert backend.upload_calls == 2
+        assert app.file_uploader[0].key == "files_7_1"
+        assert app.file_uploader[0].value == []
+
+
+@pytest.mark.parametrize("code,phrase", [
+    ("prohibited_criterion", "возраст"),
+    ("no_active_criteria", "активных критериев"),
+    ("no_ready_resumes", "готовых резюме"),
+    ("active_run_exists", "уже выполняется"),
+])
+def test_streamlit_start_error_explains_next_step(code: str, phrase: str) -> None:
+    backend = FakeUiBackend()
+    backend.criteria = [{"id": 3, "vacancy_id": 7, "description": "Возраст кандидата",
+                         "priority": "required", "active": True, "display_order": 0}]
+    backend.start_error = ApiError("Нельзя анализировать возраст и другие чувствительные характеристики кандидата. Откройте раздел «Критерии», выключите или удалите запрещённый критерий и повторите запуск." if code == "prohibited_criterion" else {
+        "no_active_criteria": "Нет активных критериев. Откройте раздел «Критерии».",
+        "no_ready_resumes": "Нет готовых резюме. Откройте раздел «Резюме».",
+        "active_run_exists": "Для вакансии уже выполняется анализ. Обновите статус.",
+    }[code], status_code=409 if code == "active_run_exists" else 422, code=code)
+    with patch("ui.api_client.ApiClient", lambda: backend):
+        app = AppTest.from_file(APP_PATH).run()
+        app.sidebar.selectbox[0].set_value(7).run()
+        app.sidebar.radio[0].set_value("Анализ").run()
+        _button(app, "Запустить анализ").click().run()
+        assert not app.exception
+        assert any(phrase in item.value for item in app.error)
+        if code == "prohibited_criterion":
+            assert any("Возраст кандидата" in item.value for item in app.markdown)
+        app.run()
+        assert backend.start_calls == 1
+
+
+def test_streamlit_resume_delete_requires_confirmation_and_scopes_selection() -> None:
+    backend = FakeUiBackend()
+    backend.resumes = [{"id": 5, "vacancy_id": 7, "filename": "synthetic.pdf", "status": "ready"},
+                       {"id": 6, "vacancy_id": 8, "filename": "elsewhere.pdf", "status": "ready"}]
+    with patch("ui.api_client.ApiClient", lambda: backend):
+        app = AppTest.from_file(APP_PATH).run()
+        app.sidebar.selectbox[0].set_value(7).run()
+        app.sidebar.radio[0].set_value("Резюме").run()
+        picker = next(item for item in app.selectbox if item.label.startswith("Удалить ошибочно"))
+        assert picker.options == ["Выберите документ", "#5 · synthetic.pdf"]
+        picker.set_value(5).run()
+        assert _button(app, "Удалить резюме").disabled
+        app.checkbox(key="confirm_resume_delete_7_5").check().run()
+        _button(app, "Удалить резюме").click().run()
+        assert backend.deleted_resumes == [5]
+        assert backend.resumes == [{"id": 6, "vacancy_id": 8,
+                                   "filename": "elsewhere.pdf", "status": "ready"}]
+
+
+def test_streamlit_resume_delete_conflict_explains_history() -> None:
+    backend = FakeUiBackend()
+    backend.resumes = [{"id": 5, "vacancy_id": 7, "filename": "linked.pdf", "status": "ready"}]
+    backend.delete_error = ApiError(
+        "Документ связан с историей анализа и не может быть удалён без нарушения сохранённых результатов.",
+        status_code=409, code="resume_in_analysis",
+    )
+    with patch("ui.api_client.ApiClient", lambda: backend):
+        app = AppTest.from_file(APP_PATH).run()
+        app.sidebar.selectbox[0].set_value(7).run()
+        app.sidebar.radio[0].set_value("Резюме").run()
+        next(item for item in app.selectbox if item.label.startswith("Удалить ошибочно")).set_value(5).run()
+        app.checkbox(key="confirm_resume_delete_7_5").check().run()
+        _button(app, "Удалить резюме").click().run()
+        assert not app.exception
+        assert any("связан с историей анализа" in item.value for item in app.error)
+        assert len(backend.resumes) == 1

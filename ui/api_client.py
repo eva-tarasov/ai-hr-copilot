@@ -11,17 +11,20 @@ import httpx
 DEFAULT_BACKEND_URL = "http://127.0.0.1:8000"
 
 _SAFE_DETAILS = {
-    "active_run_exists": "Для этой вакансии уже выполняется анализ.",
-    "no_active_criteria": "Добавьте хотя бы один активный критерий.",
-    "no_ready_resumes": "Загрузите хотя бы одно обработанное резюме.",
-    "prohibited_criterion": "Критерий содержит недопустимые персональные признаки.",
+    "active_run_exists": "Для вакансии уже выполняется анализ. Откройте текущий запуск и обновите его статус.",
+    "no_active_criteria": "Нет активных критериев. Откройте раздел «Критерии», добавьте или включите профессиональный критерий и повторите запуск.",
+    "no_ready_resumes": "Нет готовых резюме. Откройте раздел «Резюме», загрузите PDF/DOCX с доступным текстом и повторите запуск.",
+    "prohibited_criterion": "Нельзя анализировать возраст и другие чувствительные характеристики кандидата. Откройте раздел «Критерии», выключите или удалите запрещённый критерий и повторите запуск.",
+    "resume_in_analysis": "Документ связан с историей анализа и не может быть удалён без нарушения сохранённых результатов.",
 }
 
 
 class ApiError(Exception):
-    def __init__(self, message: str, *, status_code: int | None = None) -> None:
+    def __init__(self, message: str, *, status_code: int | None = None,
+                 code: str | None = None) -> None:
         super().__init__(message)
         self.status_code = status_code
+        self.code = code
 
 
 @dataclass(frozen=True)
@@ -56,7 +59,7 @@ class ApiClient:
             raise ApiError("Сервер недоступен. Запустите FastAPI и повторите действие.") from None
         if response.is_error:
             detail = None
-            if response.status_code == 422:
+            if response.status_code in (409, 422):
                 try:
                     body = response.json()
                     detail = body.get("detail") if isinstance(body, dict) else None
@@ -65,14 +68,15 @@ class ApiClient:
             if response.status_code == 404:
                 message = "Запись не найдена. Обновите данные и попробуйте снова."
             elif response.status_code == 409:
-                message = "Для этой вакансии уже выполняется анализ. Обновите статус запуска."
+                message = _SAFE_DETAILS.get(detail, "Конфликт данных. Обновите страницу и повторите действие.") if isinstance(detail, str) else "Конфликт данных. Обновите страницу и повторите действие."
             elif response.status_code == 422:
                 message = _SAFE_DETAILS.get(detail, "Проверьте введённые данные.") if isinstance(detail, str) else "Проверьте введённые данные."
             elif response.status_code >= 500:
                 message = "Ошибка сервера. Повторите действие позже."
             else:
                 message = "Не удалось выполнить запрос. Проверьте данные."
-            raise ApiError(message, status_code=response.status_code)
+            code = detail if isinstance(detail, str) and detail in _SAFE_DETAILS else None
+            raise ApiError(message, status_code=response.status_code, code=code)
         if response.status_code == 204:
             return None
         try:
@@ -125,6 +129,9 @@ class ApiClient:
 
     def get_resume(self, resume_id: int) -> dict[str, Any]:
         return self._request("GET", f"/resumes/{resume_id}")
+
+    def delete_resume(self, resume_id: int) -> None:
+        self._request("DELETE", f"/resumes/{resume_id}")
 
     def start_analysis(self, vacancy_id: int) -> dict[str, Any]:
         return self._request("POST", f"/vacancies/{vacancy_id}/analyses")

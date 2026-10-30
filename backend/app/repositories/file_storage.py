@@ -67,3 +67,26 @@ class FileStorage:
         if not path.resolve().is_relative_to(self.root):
             raise OSError("File is outside storage root")
         path.unlink(missing_ok=True)
+
+    def quarantine(self, key: str) -> Path:
+        source = self.root / key
+        if not source.resolve().is_relative_to(self.root) or not source.is_file():
+            raise OSError("Stored file is unavailable")
+        directory = self.root / "tmp"
+        directory.mkdir(parents=True, exist_ok=True)
+        if not directory.resolve().is_relative_to(self.root):
+            raise OSError("Temporary directory is outside storage root")
+        destination = directory / f"delete-{uuid4().hex}.tmp"
+        source.replace(destination)
+        return destination
+
+    def restore(self, key: str, quarantined: Path) -> None:
+        destination = self.root / key
+        if not destination.resolve().is_relative_to(self.root):
+            raise OSError("File is outside storage root")
+        quarantined.replace(destination)
+
+    def purge(self, quarantined: Path) -> None:
+        if not quarantined.resolve().is_relative_to(self.root / "tmp"):
+            raise OSError("Temporary file is outside storage root")
+        quarantined.unlink()

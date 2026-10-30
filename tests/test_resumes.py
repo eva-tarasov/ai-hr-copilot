@@ -12,6 +12,7 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session
 
 from backend.app.main import create_app
+from backend.app.models import AnalysisRun, ResumeAnalysis
 from backend.app.repositories.file_storage import CHUNK_SIZE, FileStorage, UploadTooLargeError
 from backend.app.repositories.resumes import ResumeRepository
 
@@ -402,3 +403,111 @@ def test_upload_is_documented_as_multipart(client: TestClient) -> None:
     files = operation["requestBody"]["content"]["multipart/form-data"]["schema"]["properties"]["files"]
     assert files["type"] == "array"
     assert files["items"]["format"] == "binary"
+
+
+def test_delete_unused_resume_and_file_is_idempotently_not_found(
+    client: TestClient, tmp_path: Path
+) -> None:
+    vacancy = vacancy_id(client)
+    first, second = upload(client, vacancy, [
+        ("first.pdf", pdf_bytes("Synthetic first"), "application/pdf"),
+        ("second.pdf", pdf_bytes("Synthetic second"), "application/pdf"),
+    ])
+    files = list((tmp_path / "uploads" / str(vacancy)).iterdir())
+    assert len(files) == 2
+    response = client.delete(f"/resumes/{first['resume_id']}")
+    assert response.status_code == 204
+    assert client.get(f"/resumes/{first['resume_id']}").status_code == 404
+    assert client.delete(f"/resumes/{first['resume_id']}").status_code == 404
+    assert len(list((tmp_path / "uploads" / str(vacancy)).iterdir())) == 1
+    assert client.get(f"/resumes/{second['resume_id']}").status_code == 200
+    assert list((tmp_path / "uploads" / "tmp").iterdir()) == []
+
+
+@pytest.mark.parametrize("name,content", [
+    ("unsupported.txt", b"synthetic unsupported"),
+    ("broken.pdf", b"%PDF-1.7\nbroken"),
+])
+def test_delete_non_ready_resume(client: TestClient, tmp_path: Path,
+                                 name: str, content: bytes) -> None:
+    vacancy = vacancy_id(client)
+    result = upload(client, vacancy, [(name, content, "application/octet-stream")])[0]
+    assert result["status"] in ("unsupported", "parse_error")
+    stored_before = list((tmp_path / "uploads" / str(vacancy)).glob("*"))
+    assert client.delete(f"/resumes/{result['resume_id']}").status_code == 204
+    assert client.get(f"/vacancies/{vacancy}/resumes").json() == []
+    assert list((tmp_path / "uploads" / str(vacancy)).glob("*")) == []
+    assert len(stored_before) == (1 if name.endswith(".pdf") else 0)
+
+
+@pytest.mark.parametrize("run_status", ["pending", "completed"])
+def test_delete_resume_in_any_saved_run_returns_409(
+    client: TestClient, tmp_path: Path, run_status: str
+) -> None:
+    vacancy = vacancy_id(client)
+    result = upload(client, vacancy, [("linked.pdf", pdf_bytes(), "application/pdf")])[0]
+    with client.app.state.session_factory() as session:
+        run = AnalysisRun(vacancy_id=vacancy, criterion_snapshot_json=[],
+                          provider="fake", model=None, schema_version="test",
+                          prompt_version="test", status=run_status)
+        session.add(run)
+        session.flush()
+        session.add(ResumeAnalysis(run_id=run.id, resume_id=result["resume_id"]))
+        session.commit()
+    response = client.delete(f"/resumes/{result['resume_id']}")
+    assert response.status_code == 409
+    assert response.json() == {"detail": "resume_in_analysis"}
+    assert client.get(f"/resumes/{result['resume_id']}").status_code == 200
+    assert len(list((tmp_path / "uploads" / str(vacancy)).iterdir())) == 1
+
+
+def test_delete_storage_failure_keeps_record_and_file(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vacancy = vacancy_id(client)
+    result = upload(client, vacancy, [("keep.pdf", pdf_bytes(), "application/pdf")])[0]
+    def fail_quarantine(*args: object) -> None:
+        raise OSError("private storage path")
+    monkeypatch.setattr(FileStorage, "quarantine", fail_quarantine)
+    response = client.delete(f"/resumes/{result['resume_id']}")
+    assert response.status_code == 503
+    assert "private" not in response.text
+    assert client.get(f"/resumes/{result['resume_id']}").status_code == 200
+    assert len(list((tmp_path / "uploads" / str(vacancy)).iterdir())) == 1
+
+
+def test_delete_fk_catches_run_created_after_initial_check(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vacancy = vacancy_id(client)
+    result = upload(client, vacancy, [("linked.pdf", pdf_bytes(), "application/pdf")])[0]
+    with client.app.state.session_factory() as session:
+        run = AnalysisRun(vacancy_id=vacancy, criterion_snapshot_json=[],
+                          provider="fake", model=None, schema_version="test",
+                          prompt_version="test", status="completed")
+        session.add(run)
+        session.flush()
+        session.add(ResumeAnalysis(run_id=run.id, resume_id=result["resume_id"]))
+        session.commit()
+    monkeypatch.setattr(ResumeRepository, "is_in_analysis", lambda *args: False)
+    response = client.delete(f"/resumes/{result['resume_id']}")
+    assert response.status_code == 409
+    assert client.get(f"/resumes/{result['resume_id']}").status_code == 200
+    assert len(list((tmp_path / "uploads" / str(vacancy)).iterdir())) == 1
+    assert list((tmp_path / "uploads" / "tmp").iterdir()) == []
+
+
+def test_delete_database_failure_restores_file(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    vacancy = vacancy_id(client)
+    result = upload(client, vacancy, [("keep.pdf", pdf_bytes(), "application/pdf")])[0]
+    def fail_delete(*args: object) -> None:
+        raise OperationalError("DELETE resumes", {}, Exception("private SQLite detail"))
+    monkeypatch.setattr(ResumeRepository, "delete", fail_delete)
+    response = client.delete(f"/resumes/{result['resume_id']}")
+    assert response.status_code == 503
+    assert "private" not in response.text
+    assert client.get(f"/resumes/{result['resume_id']}").status_code == 200
+    assert len(list((tmp_path / "uploads" / str(vacancy)).iterdir())) == 1
+    assert list((tmp_path / "uploads" / "tmp").iterdir()) == []
