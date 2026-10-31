@@ -14,7 +14,7 @@
 - [x] S03 — Fake and OpenAI LLM adapters, strict schema, evidence
 - [x] S04 — Bounded batch analysis and statuses
 - [x] S05 — UI vertical slice and results/CSV (scope adjustable)
-- [ ] S06a — Friday demo, sample fixtures, smoke checks
+- [x] S06a — Friday demo, sample fixtures, smoke checks
 - [ ] S06b — Monday hardening, docs and QA
 - [ ] S07 — v0.2 server DB + durable worker [LOCKED]
 - [ ] S08 — v0.2 DeepSeek/Kimi adapters and evals [LOCKED]
@@ -92,4 +92,4 @@ Actionable deferred technical findings are tracked in [BACKLOG.md](BACKLOG.md).
 - S03 review: KEEP CURRENT for the LLMProvider contract and two v0.1 adapters; DEFER candidate scores, fit percentages, and ranking.
 
 ## Next action
-Repeat review of the fixes in PR #7. Keep S06a unchecked until owner acceptance and review PASS. Do not start S06b without explicit owner approval.
+Repeat review of the fixes in PR #7. Do not start S06b without explicit owner approval.
