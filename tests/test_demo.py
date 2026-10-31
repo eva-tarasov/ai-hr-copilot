@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from backend.app.main import create_app
+from backend.app.llm.fake import FakeProvider
 from backend.app.parsing.documents import parse_document
 from scripts.demo_fixtures import CRITERIA, SPECS, corpus, manifest
 from scripts.demo_seed import TITLE, local_base_url, seed
@@ -59,10 +60,15 @@ def test_corpus_manifest_and_parsers(tmp_path: Path) -> None:
             assert not result.text
 
 
-def test_seed_full_fake_run_persistence_and_reanalysis(tmp_path: Path) -> None:
+def test_seed_full_fake_run_persistence_and_reanalysis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_PROVIDER", "openai")
+    def reject_environment_provider(_settings):
+        raise AssertionError("Environment provider must not be constructed")
+    monkeypatch.setattr("backend.app.main.make_provider", reject_environment_provider)
     database_url = f"sqlite:///{tmp_path / 'demo.sqlite3'}"
     upload_dir = tmp_path / "uploads"
-    with TestClient(create_app(database_url=database_url, upload_dir=upload_dir)) as client:
+    with TestClient(create_app(database_url=database_url, upload_dir=upload_dir,
+                               analysis_provider=FakeProvider())) as client:
         vacancy_id, counts = seed(client)
         assert counts == {"ready": 15, "unsupported": 1, "parse_error": 2}
         assert client.get(f"/vacancies/{vacancy_id}/analyses").json() == []
@@ -156,7 +162,9 @@ def test_seed_full_fake_run_persistence_and_reanalysis(tmp_path: Path) -> None:
         assert client.get(f"/analyses/{run_id}").json()["criterion_snapshot"] == run["criterion_snapshot"]
         assert client.get(f"/analyses/{run_id}/results").json() == old_results
 
-    with TestClient(create_app(database_url=database_url, upload_dir=upload_dir)) as reopened:
+    with TestClient(create_app(database_url=database_url, upload_dir=upload_dir,
+                               analysis_provider=FakeProvider())) as reopened:
+        assert isinstance(reopened.app.state.analysis_provider, FakeProvider)
         assert reopened.get(f"/analyses/{run_id}/results").json() == old_results
         assert reopened.get(f"/analyses/{second_id}").json()["status"] == "completed_with_errors"
         with pytest.raises(RuntimeError, match="already exists"):

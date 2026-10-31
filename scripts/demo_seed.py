@@ -83,7 +83,7 @@ def main() -> int:
     parser.add_argument("--base-url", type=local_base_url, default="http://127.0.0.1:8000")
     args = parser.parse_args()
     try:
-        with httpx.Client(base_url=args.base_url, timeout=120) as client:
+        with httpx.Client(base_url=args.base_url, timeout=120, trust_env=False) as client:
             vacancy_id, counts = seed(client)
     except (httpx.HTTPError, RuntimeError) as error:
         parser.exit(1, f"Demo seed failed: {error}\n")
