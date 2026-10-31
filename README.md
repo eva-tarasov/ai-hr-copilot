@@ -2,6 +2,47 @@
 
 Local development app for the AI HR Copilot. The Russian Streamlit UI covers the local vacancy → criteria → resume upload → analysis → evidence flow through the FastAPI HTTP API.
 
+## Reproducible five-minute demo (S06a)
+
+Run these commands from the repository root. Python 3.13 is required. No `.env` file or OpenAI key is needed; the demo explicitly selects the offline Fake provider.
+
+```sh
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install -e '.[dev]'
+```
+
+In terminal 1, use a fresh SQLite and upload directory **outside** the repository, then start FastAPI:
+
+```sh
+source .venv/bin/activate
+DEMO_DIR="$(mktemp -d /tmp/ai-hr-demo.XXXXXX)"
+export DATABASE_URL="sqlite:///$DEMO_DIR/demo.sqlite3"
+export UPLOAD_DIR="$DEMO_DIR/uploads"
+export LLM_PROVIDER=fake
+python -m uvicorn backend.app.main:app --host 127.0.0.1 --port 8000
+```
+
+In terminal 2, start Streamlit:
+
+```sh
+source .venv/bin/activate
+export BACKEND_URL=http://127.0.0.1:8000
+python -m streamlit run ui/app.py --server.address 127.0.0.1 --server.port 8501
+```
+
+In terminal 3, generate and upload the synthetic demo corpus through HTTP:
+
+```sh
+source .venv/bin/activate
+python -m scripts.demo_seed --base-url http://127.0.0.1:8000
+python -m scripts.demo_fixtures  # print the generated manifest, without writing documents
+```
+
+The seed reports the vacancy ID, 18 unique documents (15 `ready`, 1 `unsupported`, 2 `parse_error`) and a recognized repeat upload of one valid PDF. It does **not** start analysis. Open `http://127.0.0.1:8501`, select the demo vacancy, and follow [the five-minute script](docs/DEMO_SCRIPT.md). The first run should finish with 15 analyzed documents and 3 document errors. [Demo report](docs/DEMO_REPORT.md) records observed verification and limits.
+
+To start again safely, stop terminal 1, create a **new** `DEMO_DIR` with the commands above, and restart FastAPI; the previous temporary database and uploads remain untouched. The seed deliberately refuses a second vacancy with the same demo title in one database. If it reports that the vacancy already exists, select its ID in Streamlit or use a new SQLite. If `/health` is unavailable, confirm FastAPI is running on port 8000. If Streamlit says the server is unavailable, check `BACKEND_URL` and refresh. If a document shows `unsupported`, it may lack a PDF text layer; OCR is not included. If port 8000 or 8501 is occupied, stop the conflicting process or change both the server port and the corresponding URL. Run `python -m pytest -q` for local checks.
+
 ## Requirements
 
 - Python 3.13
