@@ -11,7 +11,9 @@ import pytest
 from backend.app.main import create_app
 from backend.app.llm.fake import FakeProvider
 from backend.app.parsing.documents import parse_document
-from scripts.demo_fixtures import CRITERIA, SPECS, corpus, manifest
+import pymupdf
+
+from scripts.demo_fixtures import CRITERIA, SHOWCASE, SPECS, corpus, manifest, resume_pages
 from scripts.demo_seed import TITLE, local_base_url, seed
 
 
@@ -58,6 +60,32 @@ def test_corpus_manifest_and_parsers(tmp_path: Path) -> None:
                 assert result.source_pages == []
         else:
             assert not result.text
+
+    by_name = {spec.filename: result for spec, result in zip(
+        (spec for spec, _ in documents),
+        (parse_document(tmp_path / spec.filename, Path(spec.filename).suffix) for spec, _ in documents),
+        strict=True,
+    )}
+    for filename, profile in SHOWCASE.items():
+        extracted = by_name[filename].text
+        assert extracted
+        assert profile[0] in extracted and profile[1] in extracted
+        assert "+7 (000) 000-00-00" in extracted
+        assert profile[2] in extracted and "@example.com" in profile[2]
+        for employer in profile[4]:
+            assert employer[0] in extracted and employer[1] in extracted and employer[2] in extracted
+            assert len(employer[3]) >= 3
+            for duty in employer[3]:
+                assert duty in " ".join(extracted.split()) or all(word in extracted for word in duty.split())
+        assert "TECHNOLOGIES" in "\n".join(resume_pages(next(spec for spec in SPECS if spec.filename == filename)))
+        if filename.endswith(".pdf"):
+            with pymupdf.open(tmp_path / filename) as pdf:
+                assert len(pdf) <= 2
+                assert all(
+                    block[0] >= 0 and block[1] >= 0
+                    and block[2] <= page.rect.width and block[3] < page.rect.height - 40
+                    for page in pdf for block in page.get_text("blocks")
+                )
 
 
 def test_seed_full_fake_run_persistence_and_reanalysis(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
