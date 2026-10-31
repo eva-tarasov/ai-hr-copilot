@@ -46,7 +46,7 @@ SPECS = (
     DocumentSpec("18-corrupt.docx", (), "parse_error", None, "Malformed DOCX archive bytes"),
 )
 
-# Six showcase profiles are synthetic and use the reserved example.com domain.
+# Eight showcase profiles are synthetic and use the reserved example.com domain.
 # Their career details are separate so the analyzer facts above remain explicit.
 SHOWCASE = {
     "01-project-python.pdf": ("Mira Ellison", "Python Developer", "mira.ellison@example.com", "Backend developer focused on internal APIs and steady service operations.",
@@ -58,9 +58,15 @@ SHOWCASE = {
     "03-no-docker.pdf": ("Casey Rowan", "Backend Developer", "casey.rowan@example.com", "Backend engineer working on data services, API maintenance, and operational quality.",
         (("Pinecone Demo Studio", "2022-05 - 2024-09", "Backend Developer", ("Integrated internal APIs with a partner catalog feed.", "Analyzed logs and fixed defects reported during releases.", "Prepared validation notes for data operations.")),
          ("Meridian Demo Tech", "2020-02 - 2022-04", "Software Engineer", ("Supported backend services and routine service updates.", "Prepared release notes and supported acceptance testing.", "Reviewed operational reports with product colleagues.")))),
+    "04-negative-python.docx": ("Avery Brook", "Backend Developer", "avery.brook@example.com", "Backend developer focused on integrations and reliable reporting workflows.",
+        (("Meadow Demo Labs", "2022-04 - 2024-08", "Backend Developer", ("Maintained reporting endpoints for internal teams.", "Investigated service logs and resolved integration defects.", "Coordinated release checks with quality assurance.")),
+         ("Summit Demo Systems", "2019-09 - 2022-03", "Software Engineer", ("Supported scheduled data imports and operational tools.", "Documented partner interface changes.", "Added validation for incoming service requests.")))),
     "05-conflicting-python.pdf": ("Taylor Quinn", "Software Engineer", "taylor.quinn@example.com", "Software engineer with experience in service support, migrations, and team delivery.",
         (("Bluebird Demo Cloud", "2021-01 - 2024-04", "Software Engineer", ("Improved API error handling and staged release practices.", "Investigated service logs with operations and QA colleagues.", "Wrote integration and support handoff notes.")),
          ("Copper Demo Stack", "2018-06 - 2020-12", "Backend Developer", ("Maintained account and reporting services.", "Validated integrations with external systems.", "Supported upgrades and regression checks.")))),
+    "06-conflicting-sql.docx": ("Devon Lane", "Software Engineer", "devon.lane@example.com", "Software engineer focused on service maintenance, release reliability, and integrations.",
+        (("Aspen Demo Software", "2021-06 - 2024-05", "Backend Developer", ("Developed internal service endpoints for account workflows.", "Reviewed error logs and resolved integration failures.", "Prepared release notes and coordinated acceptance checks.")),
+         ("River Demo Works", "2018-11 - 2021-05", "Software Engineer", ("Maintained scheduled import jobs and support tools.", "Documented external data exchange requirements.", "Added regression checks for service changes.")))),
     "09-two-pages.pdf": ("Morgan Reed", "Python Developer", "morgan.reed@example.com", "Backend developer focused on API design, integrations, and dependable releases.",
         (("Silver Demo Applications", "2022-02 - 2024-07", "Backend Developer", ("Added request validation and documented service behavior.", "Analyzed application logs and corrected integration errors.", "Coordinated releases with QA and support.")),
          ("Willow Demo Software", "2019-05 - 2022-01", "Software Engineer", ("Supported backend services and data import workflows.", "Prepared operational reports and integration checks.", "Wrote support guides and tracked recurring defects.")))),
@@ -110,6 +116,10 @@ def document_bytes(spec: DocumentSpec) -> bytes:
         with pymupdf.open() as pdf:
             for page_text in resume_pages(spec) or ("",):
                 page = pdf.new_page()
+                if spec.filename not in SHOWCASE:
+                    for line_number, line in enumerate(page_text.splitlines()):
+                        page.insert_text((72, 72 + 18 * line_number), line)
+                    continue
                 y = 58
                 for line in page_text.splitlines():
                     heading = line in {"PROFESSIONAL PROFILE", "EXPERIENCE", "TECHNOLOGIES"}

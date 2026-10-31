@@ -2,8 +2,11 @@
 
 from argparse import ArgumentTypeError
 from collections import Counter
+from hashlib import sha256
+from io import BytesIO
 from pathlib import Path
 from time import monotonic, sleep
+from zipfile import ZipFile, ZipInfo
 
 from fastapi.testclient import TestClient
 import pytest
@@ -12,6 +15,7 @@ from backend.app.main import create_app
 from backend.app.llm.fake import FakeProvider
 from backend.app.parsing.documents import parse_document
 import pymupdf
+from docx import Document
 
 from scripts.demo_fixtures import CRITERIA, SHOWCASE, SPECS, corpus, manifest, resume_pages
 from scripts.demo_seed import TITLE, local_base_url, seed
@@ -30,11 +34,51 @@ def finished(client: TestClient, run_id: int) -> dict:
 
 
 def test_corpus_manifest_and_parsers(tmp_path: Path) -> None:
+    expected_showcase = {
+        "01-project-python.pdf", "02-skills-only.docx", "03-no-docker.pdf",
+        "04-negative-python.docx", "05-conflicting-python.pdf", "06-conflicting-sql.docx",
+        "09-two-pages.pdf", "10-mixed-facts.docx",
+    }
+    assert len(SHOWCASE) == 8
+    assert set(SHOWCASE) == expected_showcase
+    assert sum(name.endswith(".pdf") for name in SHOWCASE) == 4
+    assert sum(name.endswith(".docx") for name in SHOWCASE) == 4
     documents = corpus()
     assert len(documents) == 18
     assert len({spec.filename for spec, _ in documents}) == 18
     assert len({data for _, data in documents}) == 18
     assert documents == corpus()
+    assert len([spec for spec, _ in documents if spec.filename not in expected_showcase]) == 10
+    for spec, data in documents:
+        if spec.filename in expected_showcase:
+            continue
+        if spec.filename == "17-corrupt.pdf":
+            expected = b"%PDF-1.7\nsynthetic invalid xref\n"
+        elif spec.filename == "18-corrupt.docx":
+            expected = b"PK\x03\x04synthetic invalid archive"
+        elif spec.filename.endswith(".pdf"):
+            with pymupdf.open() as pdf:
+                for page_text in spec.pages or ("",):
+                    page = pdf.new_page()
+                    for line_number, line in enumerate(page_text.splitlines()):
+                        page.insert_text((72, 72 + 18 * line_number), line)
+                fixed_id = sha256(spec.filename.encode()).hexdigest()[:32].upper()
+                pdf.xref_set_key(-1, "ID", f"[<{fixed_id}><{fixed_id}>]")
+                expected = pdf.tobytes(no_new_id=True)
+        else:
+            document = Document()
+            for line in spec.pages[0].splitlines():
+                document.add_paragraph(line)
+            raw, normalized = BytesIO(), BytesIO()
+            document.save(raw)
+            with ZipFile(BytesIO(raw.getvalue())) as source, ZipFile(normalized, "w") as target:
+                for member in source.infolist():
+                    info = ZipInfo(member.filename, date_time=(2020, 1, 1, 0, 0, 0))
+                    info.compress_type = member.compress_type
+                    info.external_attr = member.external_attr
+                    target.writestr(info, source.read(member))
+            expected = normalized.getvalue()
+        assert data == expected, spec.filename
     assert Counter(spec.parse_status for spec, _ in documents) == {
         "ready": 15, "unsupported": 1, "parse_error": 2,
     }
