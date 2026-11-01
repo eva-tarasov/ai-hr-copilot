@@ -260,6 +260,17 @@ class FakeUiBackend:
         self.runs: list[dict] = []
         self.archive_calls = 0
         self.restore_calls = 0
+        self.reviews = {}
+        self.review_calls = 0
+
+    def list_reviews(self, vacancy_id):
+        return list(self.reviews.values())
+
+    def save_review(self, resume_id, vacancy_id, reviewed, note):
+        self.review_calls += 1
+        self.reviews[resume_id] = {"resume_id": resume_id, "vacancy_id": vacancy_id,
+                                   "reviewed": reviewed, "note": note}
+        return self.reviews[resume_id]
 
     def __enter__(self):
         return self
@@ -409,6 +420,27 @@ def test_streamlit_start_rerun_results_snapshot_and_no_repeat_post() -> None:
         assert all("пригодности" not in item.value.lower() for item in app.markdown)
         next(item for item in app.selectbox if item.label == "Детали документа из таблицы").set_value(5).run()
         assert any(item.value == "Синтетический исходный текст" for item in app.text_area)
+
+
+def test_streamlit_review_save_and_rerun():
+    backend = FakeUiBackend()
+    backend.runs = [{"id": 11, "vacancy_id": 7, "status": "completed",
+                     "created_at": "2026-10-30T10:00:00Z", "started_at": None,
+                     "completed_at": None, "provider": "fake", "model": None}]
+    with patch("ui.api_client.ApiClient", lambda: backend):
+        app = AppTest.from_file(APP_PATH).run()
+        app.sidebar.selectbox[0].set_value(7).run()
+        app.sidebar.radio[0].set_value("Результаты").run()
+        assert not app.exception
+        next(item for item in app.checkbox if item.label == "Проверено HR").check()
+        next(item for item in app.text_area if item.label == "Заметка HR").set_value("Синтетическая заметка")
+        next(item for item in app.button if item.label == "Сохранить проверку").click().run()
+        assert not app.exception and backend.review_calls == 1
+        assert backend.reviews[5]["note"] == "Синтетическая заметка"
+        assert any("Проверка сохранена" in item.value for item in app.success)
+        app.run()
+        assert backend.review_calls == 1
+        assert any("Сохранено: Проверено" in item.value for item in app.markdown)
 
 
 def test_streamlit_backend_unavailable_has_safe_empty_state() -> None:

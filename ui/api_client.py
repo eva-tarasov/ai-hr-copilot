@@ -153,3 +153,11 @@ class ApiClient:
 
     def get_results(self, run_id: int) -> dict[str, Any]:
         return self._request("GET", f"/analyses/{run_id}/results")
+
+    def list_reviews(self, vacancy_id: int) -> list[dict[str, Any]]:
+        return self._request("GET", f"/vacancies/{vacancy_id}/reviews", kind=list)
+
+    def save_review(self, resume_id: int, vacancy_id: int, reviewed: bool, note: str | None) -> dict[str, Any]:
+        return self._request("PATCH", f"/resumes/{resume_id}/review", json={
+            "vacancy_id": vacancy_id, "reviewed": reviewed, "note": note,
+        })
