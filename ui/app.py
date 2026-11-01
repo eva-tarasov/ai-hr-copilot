@@ -9,7 +9,7 @@ from ui.api_client import ApiClient, ApiError, UploadInput
 from ui.presentation import (
     DOCUMENT_LABELS, FINDING_EXPLANATIONS, FINDING_LABELS, MATRIX_FINDING_LABELS,
     PRIORITY_LABELS, RUN_LABELS, UPLOAD_LABELS, current_run_id, detail_findings,
-    matrix_column, matrix_rows, remember_run, run_label, technical_progress,
+    export_csv, matrix_column, matrix_rows, remember_run, run_label, technical_progress,
     upload_message, visible_results,
 )
 
@@ -308,7 +308,10 @@ def _results_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
     run = api.get_analysis(run_id)
     payload = api.get_results(run_id)
     all_results = payload.get("results", [])
+    reviews = {item["resume_id"]: item for item in api.list_reviews(selected["id"])}
     st.caption(f"Запуск #{run_id}. Критерии взяты из snapshot этого запуска.")
+    st.download_button("Скачать CSV", data=export_csv(selected["id"], run, all_results, reviews),
+                       file_name=f"analysis_{run_id}.csv", mime="text/csv")
     chosen = st.selectbox(
         "Фильтр по фактическому статусу критерия", [None, *FINDING_LABELS],
         format_func=lambda value: "Все резюме" if value is None else FINDING_LABELS[value],
@@ -327,11 +330,12 @@ def _results_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
     columns = {
         "Документ": st.column_config.TextColumn("Документ", width="medium"),
         "Статус обработки": st.column_config.TextColumn("Статус обработки", width="medium"),
+        "Проверка HR": st.column_config.TextColumn("Проверка HR", width="medium"),
         **{matrix_column(item): st.column_config.TextColumn(
             matrix_column(item), width="medium"
         ) for item in run["criterion_snapshot"]},
     }
-    st.dataframe(matrix_rows(results, run["criterion_snapshot"]),
+    st.dataframe(matrix_rows(results, run["criterion_snapshot"], reviews),
                  hide_index=True, use_container_width=True, height=min(650, 62 + 52 * len(results)),
                  row_height=48, column_config=columns)
     st.caption("При большом числе критериев таблица прокручивается по горизонтали. Порядок документов сохранён из запуска.")
@@ -343,6 +347,18 @@ def _results_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
     )
     item = by_id[selected_resume_id]
     st.subheader(f"{item['filename']} · {DOCUMENT_LABELS.get(item['status'], item['status'])}")
+    review = reviews.get(selected_resume_id, {})
+    st.caption("Проверка относится к резюме в вакансии, а не к конкретному запуску анализа.")
+    st.write("Сохранено: " + ("Проверено" if review.get("reviewed") else "Не проверено"))
+    with st.form(key=f"review_{selected['id']}_{selected_resume_id}"):
+        reviewed = st.checkbox("Проверено HR", value=review.get("reviewed", False))
+        note = st.text_area("Заметка HR", value=review.get("note") or "", max_chars=2000)
+        if st.form_submit_button("Сохранить проверку"):
+            api.save_review(selected_resume_id, selected["id"], reviewed, note or None)
+            st.session_state["review_saved"] = (selected["id"], selected_resume_id)
+            st.rerun()
+    if st.session_state.pop("review_saved", None) == (selected["id"], selected_resume_id):
+        st.success("Проверка сохранена.")
     if item.get("error"):
         st.warning(_DOCUMENT_ERRORS.get(item["error"], "Не удалось обработать документ."))
     for pair in detail_findings(item, run["criterion_snapshot"]):

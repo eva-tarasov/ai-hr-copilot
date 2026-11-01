@@ -87,6 +87,7 @@ Open `http://127.0.0.1:8000/docs` to exercise the API:
 - `GET/POST /vacancies/{id}/criteria`
 - `PATCH/DELETE /criteria/{id}`
 - `POST/GET /vacancies/{id}/resumes`, `GET /resumes/{id}`; `GET /vacancies/{id}/resumes?include_archived=true` includes archived records
+- `GET /vacancies/{id}/reviews`, `PATCH /resumes/{id}/review` for human review
 - `POST /resumes/{id}/archive`, `POST /resumes/{id}/restore`, `DELETE /resumes/{id}`
 - `POST/GET /vacancies/{id}/analyses`, `GET /analyses/{id}`, `GET /analyses/{id}/results`
 
@@ -151,7 +152,11 @@ Open `http://127.0.0.1:8501`. The Russian UI shows backend availability. For a l
 4. In **Анализ**, click **Запустить анализ** and use **Обновить** to poll. Choose old runs from **История анализов** by UTC date and status. The percentage measures completed document processing only.
 5. In **Результаты**, compare documents side by side in the scrollable fact matrix, filter by factual criterion status, then choose **Детали документа из таблицы** for the exact quote, PDF page, follow-up question, and extracted source text.
 
-The UI keeps the selected vacancy and run across Streamlit reruns. After a browser refresh, select the vacancy and choose a run from its dated history; the latest run is selected automatically. SQLite stores UTC timestamps without timezone metadata, so the UI labels historical dates explicitly as UTC. The Streamlit theme is fixed to a light palette with a larger base font, including when macOS uses Dark Mode. If the API is stopped, refresh the page to see the offline message. See [S05 manual QA](docs/S05_MANUAL_QA.md) for the acceptance flow. Domain CSV export and persistent HR review notes are not implemented in S05.
+In **Результаты**, select a document, set **Проверено HR** and an optional **Заметка HR** (up to 2000 characters), then save. The mark and note belong to the resume in the vacancy, not to a particular run; a later analysis still needs human review. They persist in SQLite across refresh and archive/restore and are never included in LLM input. `PATCH /resumes/{id}/review` accepts `{"reviewed": true, "note": "...", "vacancy_id": 1}`; the optional vacancy ID is checked against the resume. `GET /vacancies/{id}/reviews` returns saved reviews, including archived resumes.
+
+**Скачать CSV** exports the selected run using its frozen criterion snapshot and current HR reviews. It contains one row per document and criterion, with empty finding fields for failed/interrupted documents. Output is UTF-8 with BOM; cells that could be interpreted as spreadsheet formulas are prefixed with an apostrophe. The browser saves the file only on request; it can contain resume evidence and notes and should be handled as private data.
+
+The UI keeps the selected vacancy and run across Streamlit reruns. After a browser refresh, select the vacancy and choose a run from its dated history; the latest run is selected automatically. SQLite stores UTC timestamps without timezone metadata, so the UI labels historical dates explicitly as UTC. The Streamlit theme is fixed to a light palette with a larger base font, including when macOS uses Dark Mode. If the API is stopped, refresh the page to see the offline message. See [S05 manual QA](docs/S05_MANUAL_QA.md) for the acceptance flow.
 
 ## Test
 
