@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.llm.contracts import LLMAnalysis
 from backend.app.models import AnalysisRun, CriterionFinding, Resume, ResumeAnalysis
+from backend.app.models.analysis import AnalysisInputSnapshot
 from backend.app.models.entities import utc_now
 from backend.app.models.run_states import DOCUMENT_TRANSITIONS, RUN_TRANSITIONS, require_transition
 
@@ -28,9 +29,17 @@ class AnalysisRepository:
         self.session.add(run)
         try:
             self.session.flush()
-            self.session.add_all(
-                ResumeAnalysis(run_id=run.id, resume_id=resume_id) for resume_id in resume_ids
-            )
+            for resume_id in resume_ids:
+                resume = self.session.get(Resume, resume_id)
+                if resume is None:
+                    raise ValueError("Resume disappeared during run creation")
+                document = ResumeAnalysis(run_id=run.id, resume_id=resume_id)
+                self.session.add(document)
+                self.session.flush()
+                self.session.add(AnalysisInputSnapshot(
+                    resume_analysis_id=document.id, status=resume.status,
+                    extracted_text=resume.extracted_text, source_pages=resume.source_pages,
+                ))
             self.session.commit()
         except IntegrityError as error:
             self.session.rollback()
@@ -63,6 +72,10 @@ class AnalysisRepository:
             .join(Resume, Resume.id == ResumeAnalysis.resume_id)
             .where(ResumeAnalysis.id == document_id)
         ).one_or_none()
+
+    def input_snapshot(self, document_id: int) -> tuple[str, str | None, list[dict[str, object]]] | None:
+        item = self.session.get(AnalysisInputSnapshot, document_id)
+        return None if item is None else (item.status, item.extracted_text, item.source_pages)
 
     def findings(self, document_id: int) -> list[CriterionFinding]:
         return list(self.session.scalars(
