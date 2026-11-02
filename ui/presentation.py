@@ -79,7 +79,7 @@ def matrix_rows(
             "Статус обработки": MATRIX_DOCUMENT_LABELS.get(result["status"], result["status"]),
         }
         if reviews is not None:
-            row["Проверка HR"] = "Проверено" if reviews.get(result["resume_id"], {}).get("reviewed") else "Не проверено"
+            row["Проверка HR"] = "✅ Проверено" if reviews.get(result["resume_id"], {}).get("reviewed") else "Не проверено"
         findings = {item["criterion_id"]: item for item in result.get("findings", [])}
         for criterion in snapshot:
             if result["status"] != "completed":

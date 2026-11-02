@@ -1,11 +1,11 @@
 # AI HR Copilot — progress
 
 **Updated:** 2026-11-02
-**Current phase:** S06b — hardening (Part 2: final v0.1 hardening)
-**Current phase state:** Part 1 COMPLETE; Part 2 IN PROGRESS; overall S06b incomplete
+**Current phase:** Post-v0.1 UX — live progress and HR marker
+**Current phase state:** IMPLEMENTATION — REVIEW PENDING
 **Target:** local demo v0.1 Fri 2026-10-30; hardened v0.1 Mon 2026-11-02.
 **Approved architecture:** ADR-001 in `docs/DECISIONS.md`.
-**Latest reviewed PR / SHA:** [PR #8](https://github.com/eva-tarasov/ai-hr-copilot/pull/8), merge SHA `4f198711149f47d2f1be20329abfaf411903c5e1` — merged; Code Review PASS and owner acceptance PASS.
+**Latest reviewed PR / SHA:** [PR #9](https://github.com/eva-tarasov/ai-hr-copilot/pull/9), merge SHA `537835e2d5ac2a157c2b9dbfda934a324a95ca7b` — merged; owner acceptance PASS.
 
 ## Phase checklist
 - [x] S00 — Repo + toolchain + runnable FastAPI/Streamlit + tests
@@ -15,7 +15,7 @@
 - [x] S04 — Bounded batch analysis and statuses
 - [x] S05 — UI vertical slice and results/CSV (scope adjustable)
 - [x] S06a — Friday demo, sample fixtures, smoke checks
-- [ ] S06b — Monday hardening, docs and QA
+- [x] S06b — Monday hardening, docs and QA
 - [ ] S07 — v0.2 server DB + durable worker [LOCKED]
 - [ ] S08 — v0.2 DeepSeek/Kimi adapters and evals [LOCKED]
 - [ ] S09 — v0.2 VPS/HTTPS/auth/security [LOCKED]
@@ -43,12 +43,14 @@
 | 2026-11-01 | S06b Part 1 | `feat/s06b-review-export`; PR/SHA pending | `.venv/bin/python -m pytest -q`: 210 passed, 6 warnings; `.venv/bin/python -m compileall backend ui scripts tests`: exit 0; `.venv/bin/python -m pip check`: no broken requirements (pip cache warning); `git diff --check`: exit 0. Temporary SQLite tests cover review upsert, validation, isolation, archive/restore, restart, old schema, no review note passed to FakeProvider, old run snapshot CSV, Unicode, formulas and failed/interrupted rows; AppTest covers review save and no repeated PATCH. Local FakeProvider browser: saved a synthetic note and checkbox, reopened after refresh; CSV downloaded with BOM and 54 rows including 9 failed rows without findings. CSV was inspected as text, not opened in Excel. | PENDING REVIEW | New `hr_reviews` table via `create_all`; review belongs to vacancy/resume, not a run. No actual OpenAI call. |
 | 2026-11-02 | S06b Part 1 closure | [PR #8](https://github.com/eva-tarasov/ai-hr-copilot/pull/8), merge `4f198711149f47d2f1be20329abfaf411903c5e1` | Owner confirmed merge, Code Review PASS and owner acceptance PASS. | COMPLETE | S06b Part 2 approved; overall S06b remains open. |
 | 2026-11-02 | S06b Part 2 | `codex/s06b-final-hardening`; PR/SHA pending | `.venv/bin/python -m pytest -q`: 215 passed, 6 warnings; `.venv/bin/python -m compileall backend ui scripts tests`: exit 0; `.venv/bin/python -m pip check`: no broken requirements (pip cache warning); `git diff --check`: exit 0. Controlled 0.8 s DB delay: synchronous replay `/health` 0.824 s and `/analyses/1` 0.825 s; worker-thread version both 0.003 s. Temporary SQLite tests cover frozen inputs, missing snapshot fail-closed, existing database history, independent session thread use and responsive HTTP. FakeProvider local HTTP seed and run: 18 documents, 15 completed, 3 failed; synthetic HR review saved/read; first PDF quote verified on page 1. | IN PROGRESS — review pending | New input snapshot table is created without altering existing columns. Old runs cannot gain historical input snapshots retroactively. OpenAI plan prepared; no real request. |
+| 2026-11-02 | S06b closure | [PR #9](https://github.com/eva-tarasov/ai-hr-copilot/pull/9); merge `537835e2d5ac2a157c2b9dbfda934a324a95ca7b` | Owner reported acceptance PASS and a real OpenAI smoke-test using synthetic data; observed platform cost $0.01. | COMPLETE — OWNER ACCEPTANCE PASS / MERGED | Smoke-test details and cost are owner-reported; no additional real request made in this UX work. |
+| 2026-11-02 | Post-v0.1 UX | `feat/live-progress-hr-marker`; PR/SHA pending | `.venv/bin/python -m pytest -q`: 228 passed, 6 warnings; `.venv/bin/python -m compileall backend ui scripts tests`: exit 0; `.venv/bin/python -m pip check`: no broken requirements (pip cache warning); `git diff --check`: exit 0. AppTest covers polling states, errors, switching and HR marker. Live local FastAPI/Streamlit with temporary SQLite and delayed FakeProvider: progress advanced 0% → 33% → 100%, 15 completed and 3 failed; polling stopped, browser refresh recovered run history, synthetic HR mark and note saved. | REVIEW PENDING | No real OpenAI requests or credentials used. |
 
 ## Gates
 A phase is COMPLETE only after tests and human review PASS. Codex updates this file with truthful evidence and leaves PR/SHA blank until known. Do not mark PASS on own authority.
 
 ## Blockers
-- OpenAI API key with billing needed for real-model smoke test; Fake model works without key.
+- Further real-model calls require explicit owner authorization; Fake model works without a key.
 - Only synthetic or authorized de-identified resumes permitted for demo.
 
 Actionable deferred technical findings are tracked in [BACKLOG.md](BACKLOG.md).
@@ -80,7 +82,7 @@ Actionable deferred technical findings are tracked in [BACKLOG.md](BACKLOG.md).
 - S04 exposed results through HTTP; S05 adds the Streamlit view. CSV remains outside the completed S04 scope.
 
 ## S05 risks / limits
-- Browser refresh resets Streamlit's selected vacancy; reselecting it loads the run history from backend with the latest run selected. Status updates are button-driven, without automatic polling. macOS Dark Mode appearance still needs owner verification because the local computer-use permission was denied during this check.
+- Browser refresh resets Streamlit's selected vacancy; reselecting it loads the run history from backend with the latest run selected. Active runs now refresh automatically; polling pauses on a network error and can be retried manually. macOS Dark Mode appearance still needs owner verification because the local computer-use permission was denied during the S05 check.
 - Archiving retains the file, extracted text and historical evidence; only eligible unlinked documents can be permanently deleted. The local SQLite `BEGIN IMMEDIATE` lock serializes archive and run creation, but is not a multiworker locking design.
 - CSV export and persistent HR review were outside S05; they are implemented in S06b Part 1.
 - Streamlit's local file-picker limit is 10 MB; if `MAX_UPLOAD_MB` is changed, both limits must be aligned. Backend validates file size independently.
@@ -96,4 +98,4 @@ Actionable deferred technical findings are tracked in [BACKLOG.md](BACKLOG.md).
 - S03 review: KEEP CURRENT for the LLMProvider contract and two v0.1 adapters; DEFER candidate scores, fit percentages, and ranking.
 
 ## Next action
-Complete and review S06b Part 2; seek explicit owner approval before any real OpenAI smoke-test.
+Review the post-v0.1 UX changes and request owner acceptance; do not begin S07–S09 without explicit approval. Further real OpenAI calls require owner authorization.
