@@ -60,6 +60,16 @@ class ResumeAnalysis(Base):
     completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class AnalysisInputSnapshot(Base):
+    __tablename__ = "analysis_input_snapshots"
+    resume_analysis_id: Mapped[int] = mapped_column(
+        ForeignKey("resume_analyses.id", ondelete="CASCADE"), primary_key=True
+    )
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    extracted_text: Mapped[str | None] = mapped_column(Text, nullable=True)
+    source_pages: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False)
+
+
 class CriterionFinding(Base):
     __tablename__ = "criterion_findings"
     __table_args__ = (

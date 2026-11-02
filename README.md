@@ -109,6 +109,10 @@ After creating a vacancy, at least one active criterion, and at least one active
 
 The default Fake provider works offline. The local dispatcher runs inside the FastAPI process with a shared concurrency limit; it saves each completed resume immediately and retries only transient provider failures up to three times. Incomplete runs become `interrupted` on restart, and can be restarted by submitting a new run. This is not a durable queue: work does not continue while the process is stopped. The API contains evidence for human review; it does not rank candidates or make hiring decisions.
 
+New runs freeze the extracted text, parsing status and PDF source pages in `analysis_input_snapshots` alongside the criterion snapshot. Existing SQLite databases gain this separate table via `create_all`; existing columns are not migrated. Old completed results remain readable, but inputs from runs created before this table cannot be reconstructed. Missing snapshots fail closed. Snapshots duplicate extracted text in SQLite, so protect the database and account for its retention. The resume detail view still shows current source text if the database is modified outside the application.
+
+For the verified local QA scope and remaining limits see [v0.1 QA](docs/V01_RELEASE_QA.md). A separately authorized real-model test is described in [OpenAI smoke plan](docs/OPENAI_SMOKE_PLAN.md); it has not been executed and may incur cost.
+
 ## S03 analysis service
 
 The S03 application service accepts extracted text, optional PDF `source_pages`, and an immutable criterion snapshot. S04 reuses it for each resume. It requires one finding per criterion, checks that each quote is a real text fragment and relevant to the criterion, rejects obvious weak or negative quotes marked `confirmed`, and verifies or derives PDF page numbers from the saved page text. Errors have safe machine-readable codes. It does not turn a provider failure into `not_found`.

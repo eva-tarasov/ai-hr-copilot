@@ -1,11 +1,11 @@
 # AI HR Copilot — progress
 
-**Updated:** 2026-11-01
-**Current phase:** S06b — hardening (Part 1: HR Review + CSV)
-**Current phase state:** IMPLEMENTATION — REVIEW PENDING
+**Updated:** 2026-11-02
+**Current phase:** S06b — hardening (Part 2: final v0.1 hardening)
+**Current phase state:** Part 1 COMPLETE; Part 2 IN PROGRESS; overall S06b incomplete
 **Target:** local demo v0.1 Fri 2026-10-30; hardened v0.1 Mon 2026-11-02.
 **Approved architecture:** ADR-001 in `docs/DECISIONS.md`.
-**Latest reviewed PR / SHA:** [PR #7](https://github.com/eva-tarasov/ai-hr-copilot/pull/7), merge SHA `8683b89988131efbb2a554f6e6dc598f10b3a269` — Code Review PASS, merged. S06a COMPLETE.
+**Latest reviewed PR / SHA:** [PR #8](https://github.com/eva-tarasov/ai-hr-copilot/pull/8), merge SHA `4f198711149f47d2f1be20329abfaf411903c5e1` — merged; Code Review PASS and owner acceptance PASS.
 
 ## Phase checklist
 - [x] S00 — Repo + toolchain + runnable FastAPI/Streamlit + tests
@@ -41,6 +41,8 @@
 | 2026-10-31 | S06a showcase correction | [PR #7](https://github.com/eva-tarasov/ai-hr-copilot/pull/7); reviewed `74a03b28a57f833f2bcc61d3cf4524a7c6d34c8d`; fix `fc2767fd47fd6481a772aa2bd30108dbe7e741a8` | `.venv/bin/python -m pytest -q`: 204 passed, 6 warnings; `.venv/bin/python -m compileall backend ui scripts tests`: exit 0; `.venv/bin/python -m pip check`: no broken requirements (pip cache warning); `git diff --check`: exit 0. Exact eight showcase names, four PDF/four DOCX, all findings/evidence, and original compact bytes of the other ten are checked. | CHANGES — repeat review pending | Added synthetic DOCX profiles for negative Python and conflicting SQL. Prior PDF preview only; no visual DOCX inspection. |
 | 2026-11-01 | S06a closure | [PR #7](https://github.com/eva-tarasov/ai-hr-copilot/pull/7); merge `8683b89988131efbb2a554f6e6dc598f10b3a269` | Owner reported Code Review PASS and merge. | COMPLETE / MERGED / Code Review PASS | S06a closed; S06b Part 1 approved. |
 | 2026-11-01 | S06b Part 1 | `feat/s06b-review-export`; PR/SHA pending | `.venv/bin/python -m pytest -q`: 210 passed, 6 warnings; `.venv/bin/python -m compileall backend ui scripts tests`: exit 0; `.venv/bin/python -m pip check`: no broken requirements (pip cache warning); `git diff --check`: exit 0. Temporary SQLite tests cover review upsert, validation, isolation, archive/restore, restart, old schema, no review note passed to FakeProvider, old run snapshot CSV, Unicode, formulas and failed/interrupted rows; AppTest covers review save and no repeated PATCH. Local FakeProvider browser: saved a synthetic note and checkbox, reopened after refresh; CSV downloaded with BOM and 54 rows including 9 failed rows without findings. CSV was inspected as text, not opened in Excel. | PENDING REVIEW | New `hr_reviews` table via `create_all`; review belongs to vacancy/resume, not a run. No actual OpenAI call. |
+| 2026-11-02 | S06b Part 1 closure | [PR #8](https://github.com/eva-tarasov/ai-hr-copilot/pull/8), merge `4f198711149f47d2f1be20329abfaf411903c5e1` | Owner confirmed merge, Code Review PASS and owner acceptance PASS. | COMPLETE | S06b Part 2 approved; overall S06b remains open. |
+| 2026-11-02 | S06b Part 2 | `codex/s06b-final-hardening`; PR/SHA pending | `.venv/bin/python -m pytest -q`: 215 passed, 6 warnings; `.venv/bin/python -m compileall backend ui scripts tests`: exit 0; `.venv/bin/python -m pip check`: no broken requirements (pip cache warning); `git diff --check`: exit 0. Controlled 0.8 s DB delay: synchronous replay `/health` 0.824 s and `/analyses/1` 0.825 s; worker-thread version both 0.003 s. Temporary SQLite tests cover frozen inputs, missing snapshot fail-closed, existing database history, independent session thread use and responsive HTTP. FakeProvider local HTTP seed and run: 18 documents, 15 completed, 3 failed; synthetic HR review saved/read; first PDF quote verified on page 1. | IN PROGRESS — review pending | New input snapshot table is created without altering existing columns. Old runs cannot gain historical input snapshots retroactively. OpenAI plan prepared; no real request. |
 
 ## Gates
 A phase is COMPLETE only after tests and human review PASS. Codex updates this file with truthful evidence and leaves PR/SHA blank until known. Do not mark PASS on own authority.
@@ -94,4 +96,4 @@ Actionable deferred technical findings are tracked in [BACKLOG.md](BACKLOG.md).
 - S03 review: KEEP CURRENT for the LLMProvider contract and two v0.1 adapters; DEFER candidate scores, fit percentages, and ranking.
 
 ## Next action
-Review S06b Part 1 changes. Do not start Part 2 without explicit owner approval.
+Complete and review S06b Part 2; seek explicit owner approval before any real OpenAI smoke-test.
