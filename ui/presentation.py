@@ -3,6 +3,8 @@
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 from typing import Any
+import csv
+from io import StringIO
 
 
 RUN_LABELS = {
@@ -67,7 +69,8 @@ def matrix_column(criterion: Mapping[str, Any]) -> str:
 
 
 def matrix_rows(
-    results: Sequence[dict[str, Any]], snapshot: Sequence[dict[str, Any]]
+    results: Sequence[dict[str, Any]], snapshot: Sequence[dict[str, Any]],
+    reviews: Mapping[int, dict[str, Any]] | None = None,
 ) -> list[dict[str, str]]:
     rows = []
     for result in results:
@@ -75,6 +78,8 @@ def matrix_rows(
             "Документ": result["filename"],
             "Статус обработки": MATRIX_DOCUMENT_LABELS.get(result["status"], result["status"]),
         }
+        if reviews is not None:
+            row["Проверка HR"] = "Проверено" if reviews.get(result["resume_id"], {}).get("reviewed") else "Не проверено"
         findings = {item["criterion_id"]: item for item in result.get("findings", [])}
         for criterion in snapshot:
             if result["status"] != "completed":
@@ -87,6 +92,38 @@ def matrix_rows(
             row[matrix_column(criterion)] = value
         rows.append(row)
     return rows
+
+
+def export_csv(vacancy_id: int, run: Mapping[str, Any], results: Sequence[dict[str, Any]],
+               reviews: Mapping[int, dict[str, Any]]) -> bytes:
+    """Export snapshot findings; neutralize spreadsheet formulas in all textual cells."""
+    output = StringIO(newline="")
+    writer = csv.writer(output)
+    writer.writerow(["vacancy_id", "run_id", "resume_id", "filename", "document_status",
+                     "criterion_id", "criterion_description", "criterion_priority", "finding_status",
+                     "evidence_quote", "evidence_page", "follow_up_question", "hr_reviewed", "hr_note"])
+
+    def safe(value: Any) -> str:
+        if value is None:
+            return ""
+        text = str(value)
+        if text and (text.lstrip(" ").startswith(("\t", "\r", "\n"))
+                     or text.lstrip().startswith(("=", "+", "-", "@"))):
+            return "'" + text
+        return text
+
+    for result in results:
+        findings = {item["criterion_id"]: item for item in result.get("findings", [])}
+        review = reviews.get(result["resume_id"], {})
+        for criterion in run["criterion_snapshot"]:
+            finding = findings.get(criterion["id"], {}) if result["status"] == "completed" else {}
+            writer.writerow([safe(value) for value in (
+                vacancy_id, run["id"], result["resume_id"], result["filename"], result["status"],
+                criterion["id"], criterion["description"], criterion["priority"], finding.get("status"),
+                finding.get("evidence_quote"), finding.get("evidence_page"), finding.get("follow_up_question"),
+                str(bool(review.get("reviewed"))).lower(), review.get("note"),
+            )])
+    return output.getvalue().encode("utf-8-sig")
 
 
 def detail_findings(

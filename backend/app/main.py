@@ -12,6 +12,7 @@ from backend.app.api.analyses import router as analyses_router
 from backend.app.api.health import router as health_router
 from backend.app.api.resumes import router as resumes_router
 from backend.app.api.vacancies import router as vacancies_router
+from backend.app.api.reviews import router as reviews_router
 from backend.app.core.config import get_settings
 from backend.app.core.database import create_db_engine, create_schema, create_session_factory
 from backend.app.repositories.file_storage import FileStorage
@@ -82,6 +83,7 @@ def create_app(
     app.include_router(criteria_router)
     app.include_router(resumes_router)
     app.include_router(analyses_router)
+    app.include_router(reviews_router)
     return app
 
 
