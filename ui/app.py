@@ -247,7 +247,11 @@ def _run_history_picker(api: ApiClient, vacancy_id: int) -> int | None:
     if not history:
         st.info("У этой вакансии ещё нет анализов.")
         return None
-    by_id = {item["id"]: item for item in history}
+    overrides = st.session_state.get("run_status_overrides", {})
+    by_id = {
+        item["id"]: {**item, "status": overrides.get((vacancy_id, item["id"]), item["status"])}
+        for item in history
+    }
     options = list(by_id)
     current = current_run_id(st.session_state, vacancy_id)
     if current not in by_id:
@@ -255,10 +259,18 @@ def _run_history_picker(api: ApiClient, vacancy_id: int) -> int | None:
     chosen = st.selectbox(
         "История анализов", options, index=options.index(current),
         format_func=lambda value: run_label(by_id[value]),
-        key=f"run_history_{vacancy_id}_{options[0]}",
+        key=f"run_history_{vacancy_id}_{options[0]}_{by_id[current]['status']}",
     )
     st.session_state.setdefault("run_ids", {})[vacancy_id] = chosen
+    st.session_state["run_history_displayed"] = (vacancy_id, chosen, by_id[chosen]["status"])
     return chosen
+
+
+def _sync_run_history(vacancy_id: int, run_id: int, status: str) -> None:
+    displayed = st.session_state.get("run_history_displayed")
+    if displayed and displayed[:2] == (vacancy_id, run_id) and displayed[2] != status:
+        st.session_state.setdefault("run_status_overrides", {})[(vacancy_id, run_id)] = status
+        st.rerun()
 
 
 def _render_run_progress(run: dict[str, Any]) -> None:
@@ -285,6 +297,7 @@ def _poll_run_progress(vacancy_id: int, run_id: int) -> None:
     except ApiError as error:
         st.session_state["analysis_poll_error"] = (vacancy_id, run_id, str(error))
         st.rerun()
+    _sync_run_history(vacancy_id, run_id, run["status"])
     if run["status"] not in ACTIVE_RUN_STATES:
         # Rebuild the page without a scheduled fragment after its final update.
         st.rerun()
@@ -324,6 +337,7 @@ def _analysis_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
         st.session_state["analysis_poll_error"] = (selected["id"], run_id, str(error))
         st.error(str(error) + " Автообновление приостановлено; нажмите «Обновить».")
         return
+    _sync_run_history(selected["id"], run_id, run["status"])
     paused = st.session_state.get("analysis_poll_error")
     if paused and paused[:2] == (selected["id"], run_id):
         _render_run_progress(run)
@@ -343,6 +357,7 @@ def _results_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
     if run_id is None:
         return
     run = api.get_analysis(run_id)
+    _sync_run_history(selected["id"], run_id, run["status"])
     payload = api.get_results(run_id)
     all_results = payload.get("results", [])
     reviews = {item["resume_id"]: item for item in api.list_reviews(selected["id"])}

@@ -429,19 +429,46 @@ class PollingUiBackend(FakeUiBackend):
         return result
 
 
-def test_analysis_polling_transition_stops_after_terminal_without_post() -> None:
-    backend = PollingUiBackend(["pending", "running", "completed_with_errors"])
+@pytest.mark.parametrize("terminal_status", ["completed", "completed_with_errors", "failed"])
+@pytest.mark.parametrize("terminal_on_first_read", [False, True])
+def test_history_label_tracks_selected_run_terminal_status(
+    terminal_status: str, terminal_on_first_read: bool
+) -> None:
+    # The history response remains stale even after the detail endpoint finishes.
+    states = [terminal_status] if terminal_on_first_read else ["running", terminal_status]
+    backend = PollingUiBackend(states)
     with patch("ui.api_client.ApiClient", lambda: backend):
         app = AppTest.from_file(APP_PATH).run()
         app.sidebar.selectbox[0].set_value(7).run()
         app.sidebar.radio[0].set_value("Анализ").run()
-        assert not app.exception and len(backend.calls) == 2
+        history = next(item for item in app.selectbox if item.label == "История анализов")
+        assert not app.exception
+        assert history.value == 11 and app.sidebar.selectbox[0].value == 7
+        assert RUN_LABELS[terminal_status] in history.options[0]
+        assert "Обрабатывается" not in history.options[0]
+        assert backend.start_calls == 0
+        count = len(backend.calls)
+        app.run()
+        assert len(backend.calls) == count + 1  # Full page only; no active fragment.
+
+
+def test_analysis_polling_transition_stops_after_terminal_without_post() -> None:
+    backend = PollingUiBackend(["pending"])
+    with patch("ui.api_client.ApiClient", lambda: backend):
+        app = AppTest.from_file(APP_PATH).run()
+        app.sidebar.selectbox[0].set_value(7).run()
+        app.sidebar.radio[0].set_value("Анализ").run()
+        assert not app.exception and any("Ожидает" in str(item.value) for item in app.markdown)
+        backend.states = ["running"]
+        app.run()
         assert any("Обрабатывается" in str(item.value) for item in app.markdown)
+        backend.states = ["completed_with_errors"]
         app.run()
-        assert not app.exception and len(backend.calls) == 3
+        assert not app.exception
         assert any("Завершён с ошибками" in str(item.value) for item in app.markdown)
+        count = len(backend.calls)
         app.run()
-        assert len(backend.calls) == 4 and backend.start_calls == 0
+        assert len(backend.calls) == count + 1 and backend.start_calls == 0
 
 
 def test_analysis_poll_error_pauses_until_manual_refresh() -> None:
@@ -821,7 +848,7 @@ def test_streamlit_history_switches_runs_and_vacancies_without_post() -> None:
     backend = FakeUiBackend()
     backend.vacancies.append({"id": 8, "title": "Другая роль", "description": "Синтетическая"})
     backend.runs = [
-        {"id": run_id, "vacancy_id": vacancy_id, "status": "completed",
+        {"id": run_id, "vacancy_id": vacancy_id, "status": "completed_with_errors",
          "created_at": f"2026-10-30T{hour:02}:00:00Z", "started_at": None,
          "completed_at": None, "provider": "fake", "model": None}
         for run_id, vacancy_id, hour in [(11, 7, 10), (12, 7, 11), (13, 8, 12)]
@@ -832,8 +859,8 @@ def test_streamlit_history_switches_runs_and_vacancies_without_post() -> None:
         app.sidebar.radio[0].set_value("Анализ").run()
         assert app.session_state["run_ids"][7] == 12
         picker = next(item for item in app.selectbox if item.label == "История анализов")
-        assert picker.options == ["30.10.2026 11:00 UTC · Завершён · #12",
-                                  "30.10.2026 10:00 UTC · Завершён · #11"]
+        assert picker.options == ["30.10.2026 11:00 UTC · Завершён с ошибками · #12",
+                                  "30.10.2026 10:00 UTC · Завершён с ошибками · #11"]
         picker.set_value(11).run()
         assert app.session_state["run_ids"][7] == 11
         app.run()

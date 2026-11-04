@@ -1,7 +1,7 @@
 # AI HR Copilot — progress
 
 **Updated:** 2026-11-04
-**Current phase:** Post-v0.1 — evidence validation reliability
+**Current phase:** Post-v0.1 — evidence validation reliability and analysis history status fix
 **Current phase state:** IMPLEMENTATION — REVIEW PENDING
 **Target:** local demo v0.1 Fri 2026-10-30; hardened v0.1 Mon 2026-11-02.
 **Approved architecture:** ADR-001 in `docs/DECISIONS.md`.
@@ -46,6 +46,7 @@
 | 2026-11-02 | S06b closure | [PR #9](https://github.com/eva-tarasov/ai-hr-copilot/pull/9); merge `537835e2d5ac2a157c2b9dbfda934a324a95ca7b` | Owner reported acceptance PASS and a real OpenAI smoke-test using synthetic data; observed platform cost $0.01. | COMPLETE — OWNER ACCEPTANCE PASS / MERGED | Smoke-test details and cost are owner-reported; no additional real request made in this UX work. |
 | 2026-11-02 | Post-v0.1 UX | `feat/live-progress-hr-marker`; [PR #10](https://github.com/eva-tarasov/ai-hr-copilot/pull/10); merge `ad40b29d2fdc4b27de8f793f2919930358f03e34` | `.venv/bin/python -m pytest -q`: 228 passed, 6 warnings; `.venv/bin/python -m compileall backend ui scripts tests`: exit 0; `.venv/bin/python -m pip check`: no broken requirements (pip cache warning); `git diff --check`: exit 0. AppTest covers polling states, errors, switching and HR marker. Live local FastAPI/Streamlit with temporary SQLite and delayed FakeProvider: progress advanced 0% → 33% → 100%, 15 completed and 3 failed; polling stopped, browser refresh recovered run history, synthetic HR mark and note saved. | MERGED | No real OpenAI requests or credentials used. |
 | 2026-11-04 | Evidence validation reliability | Local changes; PR/SHA pending | `.venv/bin/python -m pytest -q`: 242 passed, 6 warnings; `.venv/bin/python -m compileall backend ui scripts tests`: exit 0; `.venv/bin/python -m pip check`: no broken requirements (pip cache warning); `git diff --check`: exit 0. Offline tests cover Unicode, soft hyphens, synthetic PDF line breaks and page boundaries, changed punctuation, fabricated and joined text, safe diagnostics and prompt version. | REVIEW PENDING | PR #10 merged. NFC and soft-hyphen normalization retain contiguous matching; no actual OpenAI calls. The reported source PDFs and real-model outputs were not available for reproduction. |
+| 2026-11-04 | Analysis history status fix | `feat/evidence_ralidation_reliability`; local changes, SHA pending | `.venv/bin/python -m pytest -q`: 248 passed, 6 warnings; `.venv/bin/python -m compileall backend ui scripts tests`: exit 0; `.venv/bin/python -m pip check`: no broken requirements (pip cache warning); `git diff --check`: exit 0. AppTest checks the actual history option for completed, completed_with_errors and failed, including stale list responses and polling termination. Local browser with temporary SQLite and delayed FakeProvider: run #2 updated from running to completed_with_errors in the history without browser refresh, with 15 completed, 3 failed and 100%; vacancy and run stayed selected, and no further requests appeared in the following 6 seconds. | REVIEW PENDING | Two synthetic runs were started manually; no real OpenAI request. |
 
 ## Gates
 A phase is COMPLETE only after tests and human review PASS. Codex updates this file with truthful evidence and leaves PR/SHA blank until known. Do not mark PASS on own authority.
@@ -99,4 +100,4 @@ Actionable deferred technical findings are tracked in [BACKLOG.md](BACKLOG.md).
 - S03 review: KEEP CURRENT for the LLMProvider contract and two v0.1 adapters; DEFER candidate scores, fit percentages, and ranking.
 
 ## Next action
-Review evidence-validation changes; do not begin S07–S09 without explicit approval. Further real OpenAI calls require owner authorization.
+Review evidence-validation and analysis-history changes; do not begin S07–S09 without explicit approval. Further real OpenAI calls require owner authorization.
