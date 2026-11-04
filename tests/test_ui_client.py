@@ -11,7 +11,7 @@ from streamlit.testing.v1 import AppTest
 
 from ui.api_client import ApiClient, ApiError, UploadInput
 from ui.presentation import (
-    current_run_id, detail_findings, findings_with_snapshot, matrix_rows,
+    RUN_LABELS, current_run_id, detail_findings, findings_with_snapshot, matrix_rows,
     remember_run, run_label, technical_progress, upload_message, visible_results,
 )
 
@@ -241,6 +241,18 @@ def test_technical_progress_and_run_state_survive_rerun() -> None:
     assert state["selected_vacancy_id"] == 7
 
 
+def test_matrix_hr_marker_uses_saved_review_only() -> None:
+    results = [{"resume_id": i, "filename": f"{i}.pdf", "status": "completed", "findings": []}
+               for i in (1, 2, 3)]
+    rows = matrix_rows(results, [], {1: {"reviewed": True}, 2: {"reviewed": False}})
+    assert [row["Проверка HR"] for row in rows] == ["✅ Проверено", "Не проверено", "Не проверено"]
+
+
+@pytest.mark.parametrize("status", ["completed", "completed_with_errors", "failed", "interrupted"])
+def test_terminal_document_processing_progress(status: str) -> None:
+    assert technical_progress({"status": status, "total": 3, "completed": 1, "failed": 1, "interrupted": 1}) == 1.0
+
+
 class FakeUiBackend:
     def __init__(self) -> None:
         self.vacancies = [{"id": 7, "title": "Аналитик", "description": "Синтетическая роль"}]
@@ -393,6 +405,128 @@ class FakeUiBackend:
 
     def get_resume(self, resume_id):
         return {"id": resume_id, "extracted_text": "Синтетический исходный текст"}
+
+
+class PollingUiBackend(FakeUiBackend):
+    def __init__(self, states):
+        super().__init__()
+        self.states = list(states)
+        self.calls = []
+        self.runs = [{"id": 11, "vacancy_id": 7, "status": "running",
+                      "created_at": "2026-10-30T10:00:00Z", "started_at": None,
+                      "completed_at": None, "provider": "fake", "model": None}]
+
+    def get_analysis(self, run_id):
+        self.calls.append(run_id)
+        status = self.states.pop(0) if len(self.states) > 1 else self.states[0]
+        if status == "network_error":
+            raise ApiError("Сервер недоступен. Повторите действие.")
+        result = super().get_analysis(run_id)
+        result.update(status=status, pending=1 if status == "pending" else 0,
+                      running=1 if status == "running" else 0,
+                      completed=1, failed=1 if status == "completed_with_errors" else 0,
+                      interrupted=1 if status == "interrupted" else 0)
+        return result
+
+
+def test_analysis_polling_transition_stops_after_terminal_without_post() -> None:
+    backend = PollingUiBackend(["pending", "running", "completed_with_errors"])
+    with patch("ui.api_client.ApiClient", lambda: backend):
+        app = AppTest.from_file(APP_PATH).run()
+        app.sidebar.selectbox[0].set_value(7).run()
+        app.sidebar.radio[0].set_value("Анализ").run()
+        assert not app.exception and len(backend.calls) == 2
+        assert any("Обрабатывается" in str(item.value) for item in app.markdown)
+        app.run()
+        assert not app.exception and len(backend.calls) == 3
+        assert any("Завершён с ошибками" in str(item.value) for item in app.markdown)
+        app.run()
+        assert len(backend.calls) == 4 and backend.start_calls == 0
+
+
+def test_analysis_poll_error_pauses_until_manual_refresh() -> None:
+    backend = PollingUiBackend(["running", "network_error", "running", "running"])
+    with patch("ui.api_client.ApiClient", lambda: backend):
+        app = AppTest.from_file(APP_PATH).run()
+        app.sidebar.selectbox[0].set_value(7).run()
+        app.sidebar.radio[0].set_value("Анализ").run()
+        assert not app.exception
+        assert any("Автообновление приостановлено" in item.value for item in app.error)
+        count = len(backend.calls)
+        app.run()
+        assert len(backend.calls) == count + 1
+        next(item for item in app.button if item.label == "Обновить").click().run()
+        assert not app.exception and len(backend.calls) == count + 3
+        assert backend.start_calls == 0
+
+
+def test_analysis_poll_offline_keeps_manual_retry() -> None:
+    class OfflineDuringPoll(PollingUiBackend):
+        def __init__(self):
+            super().__init__(["running", "network_error", "running"])
+            self.offline = False
+
+        def health(self):
+            if self.offline:
+                raise ApiError("Сервер недоступен.")
+            return True
+
+        def get_analysis(self, run_id):
+            try:
+                return super().get_analysis(run_id)
+            except ApiError:
+                self.offline = True
+                raise
+
+    backend = OfflineDuringPoll()
+    with patch("ui.api_client.ApiClient", lambda: backend):
+        app = AppTest.from_file(APP_PATH).run()
+        app.sidebar.selectbox[0].set_value(7).run()
+        app.sidebar.radio[0].set_value("Анализ").run()
+        assert any("Сервер недоступен" in item.value for item in app.error)
+        assert app.button(key="refresh_backend_offline")
+        count = len(backend.calls)
+        app.button(key="refresh_backend_offline").click().run()
+        assert len(backend.calls) == count and app.button(key="refresh_backend_offline")
+        backend.offline = False
+        app.button(key="refresh_backend_offline").click().run()
+        assert not app.exception
+        app.sidebar.selectbox[0].set_value(7).run()
+        app.sidebar.radio[0].set_value("Анализ").run()
+        assert any("автоматически" in item.value for item in app.caption)
+        assert backend.start_calls == 0
+
+
+@pytest.mark.parametrize("terminal_status", ["completed", "completed_with_errors", "failed", "interrupted"])
+def test_fragment_stops_after_terminal_response(terminal_status: str) -> None:
+    backend = PollingUiBackend(["running", terminal_status, terminal_status])
+    with patch("ui.api_client.ApiClient", lambda: backend):
+        app = AppTest.from_file(APP_PATH).run()
+        app.sidebar.selectbox[0].set_value(7).run()
+        app.sidebar.radio[0].set_value("Анализ").run()
+        assert not app.exception and len(backend.calls) == 3
+        assert any(RUN_LABELS[terminal_status] in str(item.value) for item in app.markdown)
+        app.run()
+        assert len(backend.calls) == 4 and backend.start_calls == 0
+
+
+def test_polling_switches_to_selected_run_and_vacancy() -> None:
+    backend = PollingUiBackend(["running"])
+    backend.vacancies.append({"id": 8, "title": "Другая роль", "description": "Синтетическая"})
+    backend.runs.extend([
+        {"id": 12, "vacancy_id": 7, "status": "running", "created_at": "2026-10-30T11:00:00Z", "started_at": None, "completed_at": None, "provider": "fake", "model": None},
+        {"id": 13, "vacancy_id": 8, "status": "running", "created_at": "2026-10-30T12:00:00Z", "started_at": None, "completed_at": None, "provider": "fake", "model": None},
+    ])
+    with patch("ui.api_client.ApiClient", lambda: backend):
+        app = AppTest.from_file(APP_PATH).run()
+        app.sidebar.selectbox[0].set_value(7).run()
+        app.sidebar.radio[0].set_value("Анализ").run()
+        assert backend.calls[-2:] == [12, 12]
+        next(item for item in app.selectbox if item.label == "История анализов").set_value(11).run()
+        assert backend.calls[-2:] == [11, 11]
+        app.sidebar.selectbox[0].set_value(8).run()
+        assert not app.exception and backend.calls[-2:] == [13, 13]
+        assert backend.start_calls == 0
 
 
 def test_streamlit_start_rerun_results_snapshot_and_no_repeat_post() -> None:

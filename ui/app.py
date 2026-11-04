@@ -14,6 +14,7 @@ from ui.presentation import (
 )
 
 MAX_FILES_PER_REQUEST = 20
+ACTIVE_RUN_STATES = frozenset({"pending", "running"})
 
 _DOCUMENT_ERRORS = {
     "resume_not_ready": "Текст документа не был извлечён; анализ не выполнялся.",
@@ -260,6 +261,37 @@ def _run_history_picker(api: ApiClient, vacancy_id: int) -> int | None:
     return chosen
 
 
+def _render_run_progress(run: dict[str, Any]) -> None:
+    st.subheader(f"Запуск #{run['id']}")
+    st.write(f"Состояние: {RUN_LABELS.get(run['status'], run['status'])}")
+    st.write(
+        f"Всего: {run['total']} · Ожидают: {run['pending']} · В работе: {run['running']} · "
+        f"Завершены: {run['completed']} · Ошибки: {run['failed']} · Прерваны: {run['interrupted']}"
+    )
+    progress = technical_progress(run)
+    st.progress(progress, text=f"Завершено обработок: {round(progress * 100)}%")
+    st.caption("Это только ход обработки документов, не оценка кандидатов.")
+
+
+@st.fragment(run_every="2s")
+def _poll_run_progress(vacancy_id: int, run_id: int) -> None:
+    # Fragment reruns outlive the client's outer context, so open a new one per poll.
+    if (st.session_state.get("selected_vacancy_id") != vacancy_id
+            or current_run_id(st.session_state, vacancy_id) != run_id):
+        return
+    try:
+        with ApiClient() as api:
+            run = api.get_analysis(run_id)
+    except ApiError as error:
+        st.session_state["analysis_poll_error"] = (vacancy_id, run_id, str(error))
+        st.rerun()
+    if run["status"] not in ACTIVE_RUN_STATES:
+        # Rebuild the page without a scheduled fragment after its final update.
+        st.rerun()
+    _render_run_progress(run)
+    st.caption("Статус обновляется автоматически примерно каждые 2 секунды.")
+
+
 def _analysis_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
     st.header("Анализ")
     if selected is None:
@@ -283,18 +315,23 @@ def _analysis_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
     run_id = _run_history_picker(api, selected["id"])
     if run_id is None:
         return
-    run = api.get_analysis(run_id)
-    st.subheader(f"Запуск #{run_id}")
-    st.write(f"Состояние: {RUN_LABELS.get(run['status'], run['status'])}")
-    st.write(
-        f"Всего: {run['total']} · Ожидают: {run['pending']} · В работе: {run['running']} · "
-        f"Завершены: {run['completed']} · Ошибки: {run['failed']} · Прерваны: {run['interrupted']}"
-    )
-    progress = technical_progress(run)
-    st.progress(progress, text=f"Завершено обработок: {round(progress * 100)}%")
-    st.caption("Это только ход обработки документов, не оценка кандидатов.")
-    st.button("Обновить", key=f"refresh_run_{run_id}")
-    st.caption("Обновление выполняется по нажатию кнопки; автоматического опроса нет.")
+    retry_requested = st.session_state.pop("analysis_poll_retry", False)
+    if st.button("Обновить", key=f"refresh_run_{run_id}") or retry_requested:
+        st.session_state.pop("analysis_poll_error", None)
+    try:
+        run = api.get_analysis(run_id)
+    except ApiError as error:
+        st.session_state["analysis_poll_error"] = (selected["id"], run_id, str(error))
+        st.error(str(error) + " Автообновление приостановлено; нажмите «Обновить».")
+        return
+    paused = st.session_state.get("analysis_poll_error")
+    if paused and paused[:2] == (selected["id"], run_id):
+        _render_run_progress(run)
+        st.error(paused[2] + " Автообновление приостановлено; нажмите «Обновить».")
+    elif run["status"] in ACTIVE_RUN_STATES:
+        _poll_run_progress(selected["id"], run_id)
+    else:
+        _render_run_progress(run)
 
 
 def _results_page(api: ApiClient, selected: dict[str, Any] | None) -> None:
@@ -412,6 +449,10 @@ def main() -> None:
                 _results_page(api, selected)
     except ApiError as error:
         st.error(str(error))
+        if st.session_state.get("analysis_poll_error"):
+            st.caption("Автообновление приостановлено. Повторите подключение вручную.")
+            st.button("Обновить", key="refresh_backend_offline",
+                      on_click=lambda: st.session_state.__setitem__("analysis_poll_retry", True))
 
 
 if __name__ == "__main__":
