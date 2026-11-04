@@ -1,7 +1,9 @@
 """Validate provider findings against the exact snapshot and source document."""
 
 from collections.abc import Mapping, Sequence
+import logging
 import re
+import unicodedata
 from pydantic import ValidationError
 
 from backend.app.llm.contracts import CriterionFinding, CriterionSnapshot, LLMAnalysis, SourcePage
@@ -9,9 +11,16 @@ from backend.app.llm.errors import AnalysisInputError, AnalysisValidationError
 from backend.app.llm.provider import LLMProvider
 from backend.app.llm.text_signals import NEGATIVE_EXPERIENCE, WEAK_EXPERIENCE
 
+logger = logging.getLogger(__name__)
+
 
 def _normalize_whitespace(value: str) -> str:
     return " ".join(value.split())
+
+
+def _normalize_source(value: str) -> str:
+    # NFC preserves character meaning; a soft hyphen is a discretionary layout mark.
+    return _normalize_whitespace(unicodedata.normalize("NFC", value).replace("\u00ad", ""))
 
 
 _GENERIC_CRITERION_WORDS = {
@@ -154,8 +163,9 @@ class AnalysisService:
         if finding.status == "not_found":
             return finding
 
-        quote = _normalize_whitespace(finding.evidence_quote or "")
-        if not quote or quote not in _normalize_whitespace(text):
+        quote = _normalize_source(finding.evidence_quote or "")
+        if not quote or quote not in _normalize_source(text):
+            logger.warning("Evidence validation failed: code=invalid_quote criterion_id=%s", finding.criterion_id)
             raise AnalysisValidationError("invalid_quote", finding.criterion_id)
         if _INSTRUCTION_EVIDENCE.search(quote):
             raise AnalysisValidationError("untrusted_instruction_evidence", finding.criterion_id)
@@ -178,7 +188,7 @@ class AnalysisService:
             return finding
 
         matching_pages = [
-            page.page for page in pages if quote in _normalize_whitespace(page.text)
+            page.page for page in pages if quote in _normalize_source(page.text)
         ]
         if not matching_pages:
             raise AnalysisValidationError("invalid_page", finding.criterion_id)

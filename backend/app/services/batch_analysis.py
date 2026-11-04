@@ -14,7 +14,7 @@ from backend.app.services.analysis import AnalysisService
 from backend.app.services.errors import ConflictError, InvalidRunError, NotFoundError
 
 SCHEMA_VERSION = "s03-v1"
-PROMPT_VERSION = "s03-v1"
+PROMPT_VERSION = "s03-v2"
 
 
 class BatchAnalysisService:
