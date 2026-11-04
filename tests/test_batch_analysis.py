@@ -80,6 +80,32 @@ class SelectiveProvider(FakeProvider):
         return await super().analyze(text, criterion_snapshot)
 
 
+def test_invalid_quote_failure_records_safe_diagnostic(tmp_path: Path, caplog) -> None:
+    class InvalidQuoteProvider:
+        async def analyze(self, text, criterion_snapshot):
+            return {"findings": [{
+                "criterion_id": criterion_snapshot[0].id,
+                "status": "confirmed",
+                "evidence_quote": "Python invented synthetic.private@example.com",
+                "evidence_page": None,
+                "follow_up_question": None,
+            }]}
+
+    with TestClient(create_app(
+        database_url=f"sqlite:///{tmp_path / 'runs.sqlite3'}",
+        upload_dir=tmp_path / "uploads", analysis_provider=InvalidQuoteProvider(),
+    )) as client:
+        vacancy, criterion_id = setup_vacancy(client)
+        upload(client, vacancy, [("synthetic.pdf", pdf_bytes("Python source only"))])
+        run_id = client.post(f"/vacancies/{vacancy}/analyses").json()["id"]
+        assert terminal(client, run_id)["status"] == "failed"
+        result = client.get(f"/analyses/{run_id}/results").json()["results"][0]
+        assert result["error"] == "invalid_quote" and result["findings"] == []
+        assert f"code=invalid_quote criterion_id={criterion_id}" in caplog.text
+        assert "synthetic.private@example.com" not in caplog.text
+        assert "Python source only" not in caplog.text
+
+
 def test_three_resumes_persist_findings_and_snapshot_after_edit_delete(tmp_path: Path) -> None:
     db = f"sqlite:///{tmp_path / 'runs.sqlite3'}"
     with TestClient(create_app(database_url=db, upload_dir=tmp_path / "uploads")) as client:
@@ -96,7 +122,7 @@ def test_three_resumes_persist_findings_and_snapshot_after_edit_delete(tmp_path:
         assert done["status"] == "completed"
         assert (done["total"], done["completed"], done["failed"]) == (3, 3, 0)
         assert done["provider"] == "fake"
-        assert done["schema_version"] and done["prompt_version"]
+        assert done["schema_version"] and done["prompt_version"] == "s03-v2"
         assert done["started_at"] and done["completed_at"]
         results = client.get(f"/analyses/{run_id}/results").json()["results"]
         assert len(results) == 3

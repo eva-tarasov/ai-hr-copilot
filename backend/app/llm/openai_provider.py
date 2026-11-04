@@ -24,8 +24,10 @@ Use confirmed only for direct professional experience evidence; mentioned for
 references that do not establish experience; conflicting for contradictory
 professional claims; not_found when the document provides no usable evidence.
 not_found means only that this resume did not provide evidence, not that the
-candidate lacks a skill. For every non-not_found finding, quote an exact
-contiguous fragment of resume_text. Set evidence_page to null; page provenance
+candidate lacks a skill. For every non-not_found finding, copy a short, exact,
+contiguous fragment of resume_text verbatim, preserving its punctuation. Do not
+paraphrase, join fragments from different locations, alter punctuation, or invent
+evidence. Set evidence_page to null; page provenance
 is determined and verified by the application after extraction. For not_found,
 set evidence_quote and evidence_page to null. Do not invent evidence or pages."""
 

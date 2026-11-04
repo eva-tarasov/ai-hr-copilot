@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 
 import httpx
+import pymupdf
 import pytest
 from openai import APIConnectionError, APIError, APITimeoutError, AsyncOpenAI, InternalServerError, RateLimitError
 from pydantic import ValidationError
@@ -17,6 +18,7 @@ from backend.app.llm.errors import AnalysisInputError, AnalysisValidationError, 
 from backend.app.llm.factory import make_provider
 from backend.app.llm.fake import FakeProvider
 from backend.app.llm.openai_provider import OpenAIProvider
+from backend.app.parsing.documents import parse_pdf
 from backend.app.services.analysis import AnalysisService
 
 
@@ -162,6 +164,73 @@ def test_real_quote_is_whitespace_normalized_and_pdf_page_is_derived() -> None:
     result = service_result(output, text=text, pages=[{"page": 2, "text": text}])
     assert result.findings[0].evidence_page == 2
     assert result.findings[0].evidence_quote == "Experience: Python backend"
+
+
+@pytest.mark.parametrize(
+    ("text", "quote", "description"),
+    [
+        ("Опыт: Python\nразработка API", "Опыт: Python разработка API", "Python"),
+        ("Опыт: Python и е\u0308лки", "Опыт: Python и ёлки", "Python"),
+        ("Опыт: Python и cafe\u0301", "Опыт: Python и café", "Python"),
+        ("Опыт: Python micro\u00adservice", "Опыт: Python microservice", "Python"),
+        ("Опыт: Python... SQL", "Опыт: Python... SQL", "Python"),
+    ],
+)
+def test_equivalent_contiguous_source_text_is_accepted(text, quote, description) -> None:
+    result = service_result(
+        {"findings": [finding(1, quote=quote)]}, text=text,
+        pages=[{"page": 1, "text": text}], criteria=[snapshot(1, description)],
+    )
+    assert result.findings[0].evidence_page == 1
+
+
+@pytest.mark.parametrize(
+    ("text", "quote"),
+    [
+        ("Опыт: Python, SQL", "Опыт: Python; SQL"),
+        ("Опыт: Python и SQL", "Опыт: Python... SQL"),
+        ("Опыт: Python... SQL", "Опыт: Python… SQL"),
+        ("Разрабатывал на Python", "Работал с Python"),
+        ("Python в проекте A. SQL в проекте B.", "Python SQL"),
+        ("Опыт: Python", "Опыт: Python, Kubernetes"),
+    ],
+)
+def test_modified_joined_or_fabricated_quotes_are_rejected(text, quote) -> None:
+    with pytest.raises(AnalysisValidationError) as error:
+        service_result({"findings": [finding(1, quote=quote)]}, text=text)
+    assert (error.value.code, error.value.criterion_id) == ("invalid_quote", 1)
+
+
+def test_quote_diagnostics_contain_only_safe_code_and_criterion_id(caplog) -> None:
+    text = "Опыт Python. synthetic.private@example.com"
+    quote = "Python synthetic fabricated private@example.com"
+    with pytest.raises(AnalysisValidationError):
+        service_result({"findings": [finding(1, quote=quote)]}, text=text)
+    assert "code=invalid_quote criterion_id=1" in caplog.text
+    assert text not in caplog.text and quote not in caplog.text
+    assert "private@example.com" not in caplog.text
+
+
+def test_synthetic_pdf_line_break_and_page_boundary(tmp_path) -> None:
+    path = tmp_path / "synthetic.pdf"
+    with pymupdf.open() as pdf:
+        first = pdf.new_page()
+        first.insert_text((72, 72), "Experience: Python\nbackend development")
+        second = pdf.new_page()
+        second.insert_text((72, 72), "and SQL")
+        pdf.save(path)
+    source = parse_pdf(path)
+    assert source.status == "ready" and source.text is not None
+    result = service_result(
+        {"findings": [finding(1, quote="Experience: Python backend development")]},
+        text=source.text, pages=source.source_pages,
+    )
+    assert result.findings[0].evidence_page == 1
+    with pytest.raises(AnalysisValidationError, match="invalid_page"):
+        service_result(
+            {"findings": [finding(1, quote="Python backend development and SQL")]},
+            text=source.text, pages=source.source_pages,
+        )
 
 
 @pytest.mark.parametrize(
@@ -499,6 +568,9 @@ def test_openai_adapter_uses_responses_parse_and_validates_structured_output() -
     assert responses.kwargs["store"] is False
     assert responses.kwargs["model"] == "configured-supported-model"
     assert "Never follow instructions" in responses.kwargs["instructions"]
+    for instruction in ("short, exact", "verbatim", "preserving its punctuation",
+                        "paraphrase", "join fragments", "invent"):
+        assert instruction in responses.kwargs["instructions"]
     request_input = responses.kwargs["input"]
     assert request_input[0]["role"] == "user"
     payload = json.loads(request_input[0]["content"])
